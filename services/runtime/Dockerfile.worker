@@ -1,0 +1,31 @@
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/opt/YOLOX:/app/src
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 \
+        libglib2.0-0 \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-yolox.txt requirements-dvc.txt pyproject.toml ./
+COPY src ./src
+COPY configs ./configs
+
+RUN pip install -r requirements.txt \
+    && pip install -e . \
+    && pip install -r requirements-yolox.txt \
+    && git clone --depth 1 https://github.com/Megvii-BaseDetection/YOLOX.git /opt/YOLOX \
+    && python -c "from pathlib import Path; p=Path('/opt/YOLOX/setup.py'); t=p.read_text(); p.write_text(t.replace('ext_modules=get_ext_modules(),','ext_modules=[],'))" \
+    && pip install --no-build-isolation --no-deps -e /opt/YOLOX \
+    && pip install psutil \
+    && pip install -r requirements-dvc.txt
+
+CMD ["python", "-m", "ugv_mlops.worker"]

@@ -1,0 +1,17 @@
+[project]
+name = "ugv-mlops"
+version = "0.1.0"
+description = "On-prem OSS MLOps for defense UGV dataset construction and model lifecycle"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+ugv-mlops = "ugv_mlops.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

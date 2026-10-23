@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UGV MLOps</title>
+  <style>
+    :root {
+      --bg: #0e1418;
+      --panel: #172028;
+      --line: #2a3a48;
+      --text: #e7eef4;
+      --muted: #93a3b3;
+      --acc: #3dd6c6;
+      --acc2: #7eb6ff;
+      --ok: #5ad27a;
+      --wait: #e0b15b;
+      --empty: #4a5a68;
+      --bad: #f08a8a;
+      --track: #243038;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 20px 28px 8px;
+      max-width: 1280px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .sub { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; max-width: 640px; }
+    .cost {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px 14px;
+      min-width: 240px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .cost strong { color: var(--ok); }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 8px 28px 40px; }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin: 4px 0 12px;
+    }
+    .tabs button {
+      background: #121a21;
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+    .tabs button.on { background: var(--acc); color: #042421; border-color: var(--acc); }
+    .hint {
+      background: #1c2e2c;
+      border: 1px solid #2f5a52;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 0 0 18px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .hint p { margin: 0; font-size: 14px; }
+    button {
+      background: var(--acc);
+      color: #042421;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary { background: #2a3a48; color: var(--text); }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      gap: 8px;
+    }
+    @media (max-width: 1100px) {
+      .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+    @media (max-width: 700px) {
+      .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .step {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      cursor: pointer;
+      min-height: 118px;
+    }
+    .step.active { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc) inset; }
+    .step.next { border-color: var(--wait); }
+    .num { font-size: 11px; color: var(--acc); letter-spacing: 0.06em; }
+    .step h2 { margin: 4px 0 8px; font-size: 13px; font-weight: 650; line-height: 1.35; }
+    .metric { font-size: 20px; font-weight: 700; }
+    .unit { font-size: 11px; color: var(--muted); }
+    .badge {
+      display: inline-block;
+      margin-top: 8px;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #243038;
+      color: var(--empty);
+    }
+    .badge.ok { background: #1c3a28; color: var(--ok); }
+    .badge.warn { background: #3a2a14; color: var(--wait); }
+    .badge.bad { background: #3a1c1c; color: var(--bad); }
+    .detail, .tools, .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 16px;
+    }
+    .card { margin-top: 0; }
+    .card h3, .detail h3 { margin: 0 0 10px; font-size: 15px; }
+    .detail p { margin: 0 0 8px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+    .tools {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+    a.t {
+      color: inherit;
+      text-decoration: none;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #121a21;
+    }
+    a.t:hover { border-color: var(--acc2); }
+    a.t b { display: block; margin-bottom: 4px; }
+    a.t span { color: var(--muted); font-size: 12px; }
+    .job { font-size: 13px; color: var(--muted); margin-top: 10px; }
+    .integ {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .integ article {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .integ h3 { margin: 0 0 6px; font-size: 14px; }
+    .integ p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
+    .pill.on { background: #1c3a28; color: var(--ok); }
+    .pill.off { background: #3a2a14; color: var(--wait); }
+    .pill.down { background: #3a1c1c; color: var(--bad); }
+    code { color: var(--wait); }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .kpi {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      cursor: pointer;
+    }
+    .kpi:hover { border-color: var(--acc2); }
+    .kpi.go { border-color: var(--wait); }
+    .dash-now {
+      background: #1c2e2c;
+      border: 1px solid #2f5a52;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: start;
+    }
+    .dash-now h3 { margin: 0 0 6px; font-size: 13px; color: var(--acc); letter-spacing: 0.04em; }
+    .dash-now p { margin: 0; font-size: 15px; line-height: 1.5; }
+    .dash-now .meta { margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .dash-now .now-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .dash-pipe {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .dash-pipe .step { min-height: 0; padding: 8px; }
+    .dash-pipe .step h2 { font-size: 12px; margin: 2px 0 6px; }
+    .dash-pipe .metric { font-size: 16px; }
+    .dash-pipe .badge { margin-top: 4px; }
+    @media (max-width: 1100px) {
+      .dash-pipe { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .dash-now { grid-template-columns: 1fr; }
+    }
+    .feed-item {
+      display: grid;
+      grid-template-columns: 64px 72px 1fr;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      align-items: start;
+    }
+    .feed-item .when { color: var(--muted); }
+    .feed-item .kind { color: var(--acc2); }
+    .alert {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 8px;
+      background: #121a21;
+      cursor: pointer;
+    }
+    .alert.bad { border-color: #5a2a2a; }
+    .alert.warn { border-color: #5a4a20; }
+    .alert h4 { margin: 0 0 4px; font-size: 13px; }
+    .alert p { margin: 0; font-size: 12px; color: var(--muted); }
+    details.more {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 16px 16px;
+      margin-top: 12px;
+    }
+    details.more > summary {
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--muted);
+    }
+    details.more[open] > summary { margin-bottom: 12px; color: var(--text); }
+    .health span { cursor: default; }
+    .health span.off { opacity: 0.55; }
+    .kpi .n { font-size: 24px; font-weight: 700; line-height: 1.1; }
+    .kpi .l { margin-top: 4px; font-size: 12px; color: var(--muted); }
+    .kpi.warn .n { color: var(--wait); }
+    .kpi.bad .n { color: var(--bad); }
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .grid2b {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    @media (max-width: 980px) {
+      .grid2, .grid2b { grid-template-columns: 1fr; }
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 92px 1fr 48px;
+      gap: 8px;
+      align-items: center;
+      margin: 6px 0;
+      font-size: 12px;
+    }
+    .bar-lab { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { height: 8px; background: var(--track); border-radius: 99px; overflow: hidden; }
+    .bar-track i { display: block; height: 100%; background: var(--acc); }
+    .bar-n { text-align: right; font-variant-numeric: tabular-nums; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    td.mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+    .muted { color: var(--muted); }
+    .spark { width: 100%; height: 72px; display: block; }
+    .health {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .health span {
+      font-size: 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: #121a21;
+    }
+    .stamp { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+    .err { color: var(--bad); }
+    .hidden { display: none; }
+    .form-grid { display: grid; gap: 8px; }
+    .form-grid label { display: block; font-size: 12px; color: var(--muted); }
+    .form-grid input, .form-grid select, .form-grid textarea {
+      width: 100%;
+      margin-top: 4px;
+      background: #121a21;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 8px;
+      font: inherit;
+    }
+    .form-grid textarea { min-height: 72px; resize: vertical; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .issue-item {
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+    .issue-item:hover { background: #121a21; }
+    .issue-item.on { box-shadow: inset 3px 0 0 var(--acc); background: #121a21; }
+    .issue-item .ttl { font-size: 13px; font-weight: 650; }
+    .issue-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .sev-critical { color: var(--bad); font-weight: 700; }
+    .sev-high { color: #f0b08a; }
+    .sev-medium { color: var(--wait); }
+    .sev-low { color: var(--muted); }
+    .timeline { list-style: none; margin: 10px 0 0; padding: 0; }
+    .timeline li {
+      border-left: 2px solid var(--line);
+      padding: 0 0 12px 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .timeline li strong { color: var(--text); }
+    .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+    .filters button { padding: 5px 10px; font-size: 12px; }
+    .filters button.on { background: var(--acc); color: #042421; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>UGV MLOps</h1>
+      <p class="sub">帰還データから学習・ゲート・車載同期まで。クラウドは使いません。</p>
+    </div>
+    <div class="cost" id="cost">
+      <div>ソフトウェア利用料 <strong>0 円</strong></div>
+      <div>クラウド API 課金 <strong>0 円</strong></div>
+      <div style="color:var(--muted);margin-top:4px">かかるのは電気・ディスク・（実学習時の）GPU・作業工数だけです。</div>
+    </div>
+  </header>
+  <div class="wrap">
+    <div class="tabs">
+      <button id="tab-dash" class="on" type="button">ダッシュボード</button>
+      <button id="tab-flow" type="button">8工程フロー</button>
+      <button id="tab-iss" type="button">課題</button>
+    </div>
+    <div class="hint">
+      <p id="hint">読み込み中…</p>
+      <div>
+        <button id="demo" type="button">知覚デモを一巡させる</button>
+        <button id="demo-e2e" class="secondary" type="button">E2Eデモ</button>
+        <button id="demo-yolox" class="secondary" type="button">YOLOXデモ</button>
+        <button id="refresh" class="secondary" type="button">更新</button>
+      </div>
+    </div>
+
+    <div id="view-dash">
+      <div class="dash-now" id="dash-now"></div>
+      <div class="dash-pipe" id="dash-pipe"></div>
+      <div class="kpis" id="kpis"></div>
+      <div class="grid2b">
+        <section class="card">
+          <h3>最近の動き</h3>
+          <div id="feed"></div>
+        </section>
+        <section class="card">
+          <h3>注意</h3>
+          <div id="alerts"></div>
+          <h3 style="margin:16px 0 8px;font-size:14px">ツール</h3>
+          <div class="health" id="health"></div>
+        </section>
+      </div>
+      <details class="more" id="dash-more">
+        <summary>内訳と一覧（センサ・ミッション・データセット）</summary>
+        <p class="stamp" id="dash-stamp"></p>
+        <div class="grid2">
+          <section>
+            <h3>センサ内訳</h3>
+            <div id="mod-bars"></div>
+          </section>
+          <section>
+            <h3>取込の推移（日）</h3>
+            <svg class="spark" id="spark" viewBox="0 0 280 72" preserveAspectRatio="none"></svg>
+            <div id="class-bars"></div>
+          </section>
+          <section>
+            <h3>ジョブ / モデル / 同期</h3>
+            <div id="status-bars"></div>
+          </section>
+        </div>
+        <div class="grid2b" style="margin-top:12px">
+          <section>
+            <h3>学習ラン</h3>
+            <div id="runs-table"></div>
+          </section>
+          <section>
+            <h3>モデル</h3>
+            <div id="models-table"></div>
+          </section>
+        </div>
+        <div class="grid2b">
+          <section>
+            <h3>最近のジョブ</h3>
+            <div id="jobs-table"></div>
+          </section>
+          <section>
+            <h3>ミッション</h3>
+            <div id="missions-table"></div>
+          </section>
+        </div>
+        <div class="grid2b">
+          <section>
+            <h3>データセット</h3>
+            <div id="datasets-table"></div>
+          </section>
+          <section>
+            <h3>取込セッション</h3>
+            <div id="ingests-table"></div>
+          </section>
+        </div>
+        <section>
+          <h3>モデル課題（最近）</h3>
+          <div id="issues-table"></div>
+        </section>
+      </details>
+    </div>
+
+    <div id="view-flow" class="hidden">
+      <div class="flow" id="flow"></div>
+      <section class="detail" id="detail"></section>
+      <p class="job" id="job"></p>
+      <h2 style="font-size:16px;margin:22px 0 8px;">ツール連動</h2>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 8px;">起動しているだけでなく、Catalog とデータをやり取りしているかを示します。</p>
+      <div class="integ" id="integ"></div>
+      <section class="tools">
+        <a class="t" href="http://localhost:8000/docs" target="_blank" rel="noreferrer"><b>Catalog API</b><span>工程の実行（OpenAPI）</span></a>
+        <a class="t" href="http://localhost:5000" target="_blank" rel="noreferrer"><b>MLflow</b><span>学習指標・実験</span></a>
+        <a class="t" href="http://localhost:9000" target="_blank" rel="noreferrer"><b>Garage S3</b><span>bag・センサ・データセット（コンソールなし）</span></a>
+        <a class="t" href="http://localhost:8081" target="_blank" rel="noreferrer"><b>Label Studio</b><span>画像クラス / bbox（必須）</span></a>
+        <a class="t" href="http://127.0.0.1:8190" target="_blank" rel="noreferrer"><b>Xtreme1</b><span>カメラと点群の確認（Autoware compose）</span></a>
+      </section>
+      <p class="stamp">SALT は WSL GUI。DVC は ingest / データセット区切りで Garage へ。拡張は <code>--profile full</code>。</p>
+      <section class="tools" id="tools-full">
+        <a class="t" href="http://localhost:8001" target="_blank" rel="noreferrer"><b>LakeFS</b><span>データ版（Git 風・任意）</span></a>
+        <a class="t" href="http://localhost:3000" target="_blank" rel="noreferrer"><b>Gitea</b><span>学習コード（任意）</span></a>
+        <a class="t" href="http://localhost:3001" target="_blank" rel="noreferrer"><b>Grafana</b><span>監視（任意）</span></a>
+      </section>
+    </div>
+
+    <div id="view-issues" class="hidden">
+      <p class="stamp" id="iss-counts">読み込み中…</p>
+      <div class="grid2b">
+        <section class="card">
+          <h3>新規課題（デプロイ済みモデル）</h3>
+          <form id="iss-form" class="form-grid">
+            <label>モデル
+              <select id="iss-model" required></select>
+            </label>
+            <label>タイトル
+              <input id="iss-title" required maxlength="200" placeholder="例: 夜間の歩行者見逃し" />
+            </label>
+            <div class="form-row">
+              <label>重要度
+                <select id="iss-sev">
+                  <option value="low">低</option>
+                  <option value="medium" selected>中</option>
+                  <option value="high">高</option>
+                  <option value="critical">重大</option>
+                </select>
+              </label>
+              <label>種別
+                <select id="iss-cat">
+                  <option value="false_positive">誤検出</option>
+                  <option value="false_negative">見逃し</option>
+                  <option value="drift">ドリフト</option>
+                  <option value="latency">遅延</option>
+                  <option value="safety">安全</option>
+                  <option value="packaging">梱包</option>
+                  <option value="sync">同期</option>
+                  <option value="other" selected>その他</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>車両 ID
+                <input id="iss-vehicle" placeholder="UGV-01" />
+              </label>
+              <label>担当
+                <input id="iss-assignee" placeholder="任意" />
+              </label>
+            </div>
+            <label>内容
+              <textarea id="iss-desc" placeholder="再現条件、期待動作、関連サンプル ID など"></textarea>
+            </label>
+            <button type="submit">課題を起票</button>
+          </form>
+        </section>
+        <section class="card">
+          <h3>一覧</h3>
+          <div class="filters" id="iss-filters"></div>
+          <div id="issue-list"></div>
+        </section>
+      </div>
+      <section class="card" style="margin-top:12px">
+        <h3>詳細と解決まで</h3>
+        <div id="issue-detail"><p class="muted">左の一覧から課題を選ぶと、状態遷移とタイムラインが出ます。</p></div>
+      </section>
+    </div>
+  </div>
+  <script>
+    const LINKS = {
+      collect: null,
+      ingest: "http://localhost:8000/docs#/default/ingest_ingest_post",
+      annotate: "http://localhost:8081",
+      dataset: "http://localhost:8000/docs",
+      train: "http://localhost:5000",
+      gate: "http://localhost:8000/docs",
+      package: "http://localhost:9000",
+      sync: "http://localhost:8000/docs",
+    };
+    const INTEG_NAMES = {
+      catalog: "Catalog",
+      postgres: "PostgreSQL",
+      garage: "Garage",
+      mlflow: "MLflow",
+      labelstudio: "Label Studio",
+      dvc: "DVC",
+      salt: "SALT",
+      xtreme1: "Xtreme1",
+      lakefs: "LakeFS",
+      gitea: "Gitea",
+      grafana: "Grafana",
+      prometheus: "Prometheus",
+    };
+    const CORE_TOOLS = ["catalog", "postgres", "garage", "mlflow", "labelstudio"];
+    let selected = null;
+    let data = null;
+    let dash = null;
+    let view = "dash";
+    let issues = { issues: [], counts: {} };
+    let deployed = [];
+    let selectedIssueId = null;
+    let selectedIssue = null;
+    let issueFilter = "active";
+    const CAT_JA = {
+      false_positive: "誤検出",
+      false_negative: "見逃し",
+      drift: "ドリフト",
+      latency: "遅延",
+      safety: "安全",
+      packaging: "梱包",
+      sync: "同期",
+      other: "その他",
+    };
+    const ST_JA = {
+      open: "未着手",
+      in_progress: "対応中",
+      resolved: "解決",
+      wont_fix: "対応しない",
+      duplicate: "重複",
+    };
+    const SEV_JA = { low: "低", medium: "中", high: "高", critical: "重大" };
+
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
+    function fmt(n) {
+      if (n == null || n === "") return "0";
+      const x = Number(n);
+      return Number.isFinite(x) ? x.toLocaleString("ja-JP") : String(n);
+    }
+    function when(ts) {
+      if (!ts) return "—";
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime())) return String(ts).replace("T", " ").slice(0, 16);
+      return d.toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    }
+    function metricLine(m) {
+      if (!m || typeof m !== "object") return "—";
+      if (m.map50 != null) {
+        return "mAP50 " + Number(m.map50).toFixed(3);
+      }
+      if (m.mae_steer != null) {
+        return "steer " + Number(m.mae_steer).toFixed(3) + " / speed " + Number(m.mae_speed ?? 0).toFixed(3);
+      }
+      if (m.accuracy != null) {
+        const acc = (Number(m.accuracy) * 100).toFixed(1) + "%";
+        return m.false_positive_rate != null ? acc + " / FPR " + Number(m.false_positive_rate).toFixed(3) : acc;
+      }
+      return "—";
+    }
+    function statusBadge(st) {
+      const s = String(st || "");
+      const cls = ["completed", "acked", "staging", "production", "canary", "resolved"].includes(s)
+        ? "ok"
+        : ["failed", "rejected", "rolled_back", "wont_fix"].includes(s)
+          ? "bad"
+          : ["running", "queued", "pending", "sending", "open", "in_progress"].includes(s)
+            ? "warn"
+            : "";
+      return '<span class="badge ' + cls + '">' + esc(s || "—") + "</span>";
+    }
+    function bars(items, labelKey, valueKey) {
+      if (!items || !items.length) return '<p class="muted">データなし</p>';
+      const max = Math.max(1, ...items.map((i) => Number(i[valueKey] || 0)));
+      return items.map((i) => {
+        const n = Number(i[valueKey] || 0);
+        const pct = Math.round((n / max) * 100);
+        return (
+          '<div class="bar-row"><span class="bar-lab" title="' + esc(i[labelKey]) + '">' + esc(i[labelKey]) +
+          '</span><span class="bar-track"><i style="width:' + pct + '%"></i></span><span class="bar-n">' +
+          fmt(n) + "</span></div>"
+        );
+      }).join("");
+    }
+    function table(headers, rows) {
+      if (!rows.length) return '<p class="muted">まだありません</p>';
+      return (
+        "<table><thead><tr>" + headers.map((h) => "<th>" + h + "</th>").join("") +
+        "</tr></thead><tbody>" + rows.join("") + "</tbody></table>"
+      );
+    }
+    function spark(days) {
+      const svg = document.getElementById("spark");
+      if (!days || !days.length) {
+        svg.innerHTML = '<text x="8" y="40" fill="#93a3b3" font-size="12">日次の取込はまだありません</text>';
+        return;
+      }
+      const vals = days.map((d) => Number(d.n || 0));
+      const max = Math.max(1, ...vals);
+      const w = 280, h = 72, p = 8;
+      const n = Math.max(vals.length, 2);
+      const step = (w - p * 2) / (n - 1);
+      const pts = vals.map((v, i) => {
+        const x = p + i * step;
+        const y = h - p - (v / max) * (h - p * 2);
+        return { x, y, v };
+      });
+      svg.innerHTML =
+        '<polyline fill="none" stroke="#3dd6c6" stroke-width="2" points="' +
+        pts.map((p0) => p0.x.toFixed(1) + "," + p0.y.toFixed(1)).join(" ") + '" />' +
+        pts.map((p0) =>
+          '<circle cx="' + p0.x.toFixed(1) + '" cy="' + p0.y.toFixed(1) + '" r="2.4" fill="#7eb6ff" />'
+        ).join("");
+    }
+    function countBy(rows, key) {
+      const map = {};
+      (rows || []).forEach((r) => {
+        const k = r[key] || "unknown";
+        map[k] = (map[k] || 0) + 1;
+      });
+      return Object.keys(map).map((k) => ({ [key]: k, n: map[k] }));
+    }
+
+    async function load() {
+      const pipeRes = await fetch("/api/pipeline");
+      if (!pipeRes.ok) throw new Error("pipeline " + pipeRes.status);
+      data = await pipeRes.json();
+      if (!selected) selected = data.hint_step;
+      dash = await loadDashboard(data);
+      await loadIssues();
+      render();
+    }
+
+    async function loadIssues() {
+      try {
+        const [iss, dep, allModels] = await Promise.all([
+          fetch("/api/issues").then((r) => r.json()),
+          fetch("/api/models/deployed").then((r) => r.json()).catch(() => []),
+          fetch("/api/models").then((r) => r.json()).catch(() => []),
+        ]);
+        issues = iss && iss.issues ? iss : { issues: [], counts: {} };
+        deployed = Array.isArray(dep) && dep.length ? dep : (Array.isArray(allModels) ? allModels : []);
+        fillModelSelect();
+        if (selectedIssueId) {
+          selectedIssue = await fetch("/api/issues/" + selectedIssueId).then((r) => r.ok ? r.json() : null).catch(() => null);
+          if (!selectedIssue) selectedIssueId = null;
+        }
+      } catch (_) {
+        issues = issues || { issues: [], counts: {} };
+      }
+    }
+
+    function fillModelSelect() {
+      const sel = document.getElementById("iss-model");
+      if (!sel) return;
+      const current = sel.value;
+      const opts = (deployed || []).map((m) => {
+        const openN = m.open_issues != null ? " / 未解決 " + m.open_issues : "";
+        const label = (m.name || m.model_id) + " · " + (m.status || "") + openN;
+        return '<option value="' + esc(m.model_id) + '">' + esc(label) + "</option>";
+      });
+      sel.innerHTML = '<option value="">' +
+        (opts.length ? "デプロイ済みモデルを選択" : "ゲート通過または梱包済みのモデルがありません") +
+        "</option>" + opts.join("");
+      if (current && [...sel.options].some((o) => o.value === current)) sel.value = current;
+    }
+
+    async function loadDashboard(pipe) {
+      try {
+        const res = await fetch("/api/dashboard");
+        if (res.ok) return await res.json();
+      } catch (_) {}
+      const [jobs, models, datasets, samples, status] = await Promise.all([
+        fetch("/api/jobs?limit=20").then((r) => r.json()).catch(() => []),
+        fetch("/api/models").then((r) => r.json()).catch(() => []),
+        fetch("/api/datasets").then((r) => r.json()).catch(() => []),
+        fetch("/api/samples?limit=200").then((r) => r.json()).catch(() => []),
+        fetch("/api/status").then((r) => r.json()).catch(() => ({})),
+      ]);
+      const t = pipe.totals || {};
+      const jobsStatus = Object.entries(status.jobs || {}).map(([status, n]) => ({ status, n }));
+      const syncStatus = Object.entries(status.sync || {}).map(([status, n]) => ({ status, n }));
+      return {
+        learning_stage: pipe.learning_stage,
+        updated_at: new Date().toISOString(),
+        kpis: {
+          vehicles: 1,
+          missions: t.missions || 0,
+          samples: t.samples || 0,
+          labeled: t.labeled || 0,
+          datasets: t.datasets || 0,
+          runs: t.runs || 0,
+          models: t.models || 0,
+          passed: (pipe.steps || []).find((s) => s.id === "gate")?.count || 0,
+          rejected: 0,
+          packages: t.packages || 0,
+          jobs: jobs.length,
+          jobs_failed: (status.jobs || {}).failed || 0,
+          sync_acked: t.acked || 0,
+          sync_pending: (status.sync || {}).pending || 0,
+          issues_open: t.issues_open || 0,
+          issues_in_progress: 0,
+          issues_resolved: 0,
+        },
+        breakdowns: {
+          modalities: countBy(samples, "modality").sort((a, b) => b.n - a.n),
+          classifications: countBy(samples, "classification"),
+          tasks: countBy(datasets, "task"),
+          jobs: jobsStatus,
+          models: countBy(models, "status"),
+          sync: syncStatus,
+          activity: [],
+        },
+        recent: {
+          missions: [],
+          runs: models.map((m) => ({
+            run_id: m.run_id || m.model_id,
+            task: m.name,
+            stage: m.stage,
+            status: m.status,
+            metrics_json: m.metrics_json,
+            created_at: m.created_at,
+          })),
+          models,
+          jobs,
+          datasets,
+          ingests: [],
+          issues: [],
+        },
+        integrations: pipe.integrations || {},
+      };
+    }
+
+    function render() {
+      document.getElementById("hint").textContent = "次: " + data.hint;
+      document.getElementById("view-dash").classList.toggle("hidden", view !== "dash");
+      document.getElementById("view-flow").classList.toggle("hidden", view !== "flow");
+      document.getElementById("view-issues").classList.toggle("hidden", view !== "issues");
+      document.getElementById("tab-dash").classList.toggle("on", view === "dash");
+      document.getElementById("tab-flow").classList.toggle("on", view === "flow");
+      document.getElementById("tab-iss").classList.toggle("on", view === "issues");
+      renderDash();
+      renderFlow();
+      renderIssues();
+    }
+
+    function renderDash() {
+      if (!dash || !data) return;
+      const k = dash.kpis || {};
+      const b = dash.breakdowns || {};
+      const r = dash.recent || {};
+      const more = document.getElementById("dash-more");
+      const moreOpen = more ? more.open : false;
+      const job = data.latest_job;
+      const model = data.latest_model;
+      const openIssues = (k.issues_open || 0) + (k.issues_in_progress || 0);
+      const next = (data.steps || []).find((s) => s.id === data.hint_step);
+      document.getElementById("dash-now").innerHTML =
+        "<div><h3>いまやること</h3><p>" + esc(data.hint) + "</p>" +
+        '<p class="meta">学習段 ' + esc(dash.learning_stage || "S3") +
+        "　更新 " + when(dash.updated_at) +
+        (job ? "　最新ジョブ " + esc(job.kind) + " " + esc(job.status) : "") +
+        (model ? "　最新モデル " + esc(model.status) : "") +
+        "</p></div>" +
+        '<div class="now-actions">' +
+        '<button type="button" id="dash-open-step">工程 ' + esc(next ? String(next.n) : "") + " を開く</button>" +
+        (openIssues > 0 ? '<button type="button" class="secondary" id="dash-open-iss">未解決課題 ' + openIssues + "</button>" : "") +
+        "</div>";
+      const openStep = document.getElementById("dash-open-step");
+      if (openStep) openStep.onclick = () => {
+        if (data.hint_step) selected = data.hint_step;
+        view = "flow";
+        render();
+      };
+      const openIss = document.getElementById("dash-open-iss");
+      if (openIss) openIss.onclick = () => { view = "issues"; render(); };
+
+      const pipe = document.getElementById("dash-pipe");
+      pipe.innerHTML = "";
+      (data.steps || []).forEach((s) => {
+        const el = document.createElement("div");
+        el.className = "step" + (s.id === data.hint_step ? " next" : "");
+        el.innerHTML =
+          '<div class="num">' + s.n + "</div>" +
+          "<h2>" + esc(s.title) + "</h2>" +
+          '<div class="metric">' + fmt(s.count) + "</div>" +
+          '<div class="unit">' + esc(s.unit) + "</div>" +
+          '<span class="badge ' + (s.done ? "ok" : "warn") + '">' + (s.done ? "済" : "次") + "</span>";
+        if (s.id !== data.hint_step && !s.done) {
+          el.querySelector(".badge").textContent = "未";
+          el.querySelector(".badge").className = "badge";
+        }
+        el.onclick = () => { selected = s.id; view = "flow"; render(); };
+        pipe.appendChild(el);
+      });
+
+      const health = document.getElementById("health");
+      health.innerHTML = "";
+      const integ = dash.integrations || data.integrations || {};
+      let down = 0, idle = 0, wired = 0;
+      Object.keys(INTEG_NAMES).forEach((key) => {
+        const info = integ[key] || { ok: false, wired: false };
+        const isCore = info.core !== undefined ? info.core : CORE_TOOLS.indexOf(key) >= 0;
+        if (!isCore && !info.ok) return;
+        const label = info.ok ? (info.wired ? "連動" : "起動") : "停止";
+        if (isCore && !info.ok) down += 1;
+        else if (info.ok && info.wired) wired += 1;
+        else if (info.ok) idle += 1;
+        const color = info.ok ? (info.wired ? "var(--ok)" : "var(--wait)") : "var(--bad)";
+        const el = document.createElement("span");
+        if (info.ok && info.wired) el.className = "off";
+        el.innerHTML = '<b style="color:' + color + '">●</b> ' + INTEG_NAMES[key] + " " + label;
+        el.title = info.detail || "";
+        health.appendChild(el);
+      });
+
+      const kpis = [
+        ["サンプル", k.samples, "", "flow", "ingest"],
+        ["ラベル済み", k.labeled, "", "flow", "annotate"],
+        ["データセット", k.datasets, "", "flow", "dataset"],
+        ["合格モデル", k.passed, "", "flow", "gate"],
+        ["パッケージ", k.packages, "", "flow", "package"],
+        ["同期完了", k.sync_acked, "", "flow", "sync"],
+        ["未解決課題", openIssues, openIssues > 0 ? "bad" : "", "issues", ""],
+        ["失敗ジョブ", k.jobs_failed, k.jobs_failed > 0 ? "bad" : "", "more", "jobs"],
+      ];
+      document.getElementById("kpis").innerHTML = kpis.map((item) => {
+        const cls = ("kpi " + (item[2] || "")).trim();
+        return '<div class="' + cls + '" data-go="' + item[3] + '" data-step="' + item[4] +
+          '"><div class="n">' + fmt(item[1]) + '</div><div class="l">' + item[0] + "</div></div>";
+      }).join("");
+      document.getElementById("kpis").onclick = (ev) => {
+        const box = ev.target.closest(".kpi");
+        if (!box) return;
+        const go = box.getAttribute("data-go");
+        const step = box.getAttribute("data-step");
+        if (go === "issues") { view = "issues"; render(); return; }
+        if (go === "flow") {
+          if (step) selected = step;
+          view = "flow";
+          render();
+          return;
+        }
+        if (go === "more" && more) more.open = true;
+      };
+
+      const alerts = [];
+      if (k.jobs_failed > 0) {
+        alerts.push({ cls: "bad", title: "失敗ジョブ " + k.jobs_failed, body: "最近の動きでエラーを確認してください。", go: "more" });
+      }
+      if (openIssues > 0) {
+        alerts.push({ cls: "bad", title: "未解決の課題 " + openIssues, body: "デプロイ済みモデルの課題タブで追跡できます。", go: "issues" });
+      }
+      if (k.sync_pending > 0) {
+        alerts.push({ cls: "warn", title: "同期待ち " + k.sync_pending, body: "リンクが開いているあいだに chunk を送ってください。", go: "flow", step: "sync" });
+      }
+      if (k.rejected > 0) {
+        alerts.push({ cls: "warn", title: "却下モデル " + k.rejected, body: "ゲート理由をジョブ結果で確認してください。", go: "more" });
+      }
+      if (down > 0) {
+        alerts.push({ cls: "bad", title: "停止中のツール " + down, body: "右のツール状態を確認してください。", go: "" });
+      }
+      if (!alerts.length) {
+        alerts.push({ cls: "", title: "注意事項はありません", body: "連動 " + wired + " / 起動のみ " + idle + "。", go: "" });
+      }
+      document.getElementById("alerts").innerHTML = alerts.map((a) =>
+        '<div class="alert ' + a.cls + '" data-go="' + (a.go || "") + '" data-step="' + (a.step || "") +
+        '"><h4>' + esc(a.title) + "</h4><p>" + esc(a.body) + "</p></div>"
+      ).join("");
+      document.getElementById("alerts").onclick = (ev) => {
+        const box = ev.target.closest(".alert");
+        if (!box) return;
+        const go = box.getAttribute("data-go");
+        const step = box.getAttribute("data-step");
+        if (go === "issues") { view = "issues"; render(); }
+        else if (go === "flow") { if (step) selected = step; view = "flow"; render(); }
+        else if (go === "more" && more) more.open = true;
+      };
+
+      const KIND_JA = {
+        ingest: "取込", build_dataset: "データセット", train: "学習", gate: "ゲート",
+        package: "梱包", demo: "知覚デモ", demo_e2e: "E2Eデモ", demo_yolox: "YOLOXデモ",
+      };
+      const feed = [];
+      (r.jobs || []).forEach((row) => feed.push({
+        ts: row.created_at, kind: KIND_JA[row.kind] || row.kind, status: row.status,
+        text: row.error ? row.error : (row.job_id || ""),
+      }));
+      (r.runs || []).forEach((row) => feed.push({
+        ts: row.created_at, kind: "学習", status: row.status,
+        text: (row.task || "") + " " + metricLine(row.metrics_json),
+      }));
+      (r.issues || []).forEach((row) => feed.push({
+        ts: row.updated_at || row.created_at, kind: "課題", status: row.status,
+        text: row.title,
+      }));
+      feed.sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+      document.getElementById("feed").innerHTML = feed.slice(0, 12).length
+        ? feed.slice(0, 12).map((item) =>
+            '<div class="feed-item"><span class="when">' + when(item.ts) +
+            '</span><span class="kind">' + esc(item.kind) + "</span><span>" +
+            statusBadge(item.status) + " " + esc(item.text) + "</span></div>"
+          ).join("")
+        : '<p class="muted">まだ動きはありません。上のデモで一巡できます。</p>';
+
+      document.getElementById("dash-stamp").textContent =
+        "連動 " + wired + "　起動のみ " + idle + "　停止 " + down + "　8秒ごとに自動更新";
+      document.getElementById("mod-bars").innerHTML = bars(b.modalities, "modality", "n");
+      document.getElementById("class-bars").innerHTML = bars(b.classifications, "classification", "n");
+      document.getElementById("status-bars").innerHTML =
+        "<p class='muted'>ジョブ</p>" + bars(b.jobs, "status", "n") +
+        "<p class='muted' style='margin-top:10px'>モデル</p>" + bars(b.models, "status", "n") +
+        "<p class='muted' style='margin-top:10px'>同期</p>" + bars(b.sync, "status", "n");
+      spark(b.activity);
+      document.getElementById("runs-table").innerHTML = table(
+        ["時刻", "タスク", "段", "指標", "状態"],
+        (r.runs || []).map((row) =>
+          "<tr><td>" + when(row.created_at) + "</td><td>" + esc(row.task) + "</td><td>" +
+          esc(row.stage) + "</td><td>" + esc(metricLine(row.metrics_json)) + "</td><td>" +
+          statusBadge(row.status) + "</td></tr>"
+        )
+      );
+      document.getElementById("models-table").innerHTML = table(
+        ["モデル", "段", "指標", "状態"],
+        (r.models || []).map((row) =>
+          "<tr><td class='mono'>" + esc(row.model_id) + "<div class='muted'>" + esc(row.name) +
+          "</div></td><td>" + esc(row.stage) + "</td><td>" + esc(metricLine(row.metrics_json)) +
+          "</td><td>" + statusBadge(row.status) + "</td></tr>"
+        )
+      );
+      document.getElementById("jobs-table").innerHTML = table(
+        ["時刻", "種別", "状態", "エラー"],
+        (r.jobs || []).map((row) =>
+          "<tr><td>" + when(row.created_at) + "</td><td>" + esc(row.kind) + "</td><td>" +
+          statusBadge(row.status) + "</td><td class='err'>" + esc(row.error || "") + "</td></tr>"
+        )
+      );
+      document.getElementById("missions-table").innerHTML = table(
+        ["ミッション", "車両", "区分", "サンプル"],
+        (r.missions || []).map((row) =>
+          "<tr><td class='mono'>" + esc(row.mission_id) + "</td><td>" + esc(row.vehicle_id) +
+          "</td><td>" + esc(row.classification) + "</td><td>" + fmt(row.samples) + "</td></tr>"
+        )
+      );
+      document.getElementById("datasets-table").innerHTML = table(
+        ["ID", "タスク", "版", "件数"],
+        (r.datasets || []).map((row) => {
+          const n = row.stats_json && (row.stats_json.n || row.stats_json.total);
+          return "<tr><td class='mono'>" + esc(row.dataset_id) + "</td><td>" + esc(row.task) +
+            "</td><td>" + esc(row.dataset_version_id || ("v" + row.version)) + "</td><td>" +
+            fmt(n || "") + "</td></tr>";
+        })
+      );
+      document.getElementById("ingests-table").innerHTML = table(
+        ["時刻", "ミッション", "元", "ファイル", "状態"],
+        (r.ingests || []).map((row) =>
+          "<tr><td>" + when(row.started_ts) + "</td><td class='mono'>" + esc(row.mission_id) +
+          "</td><td>" + esc(row.source_type) + "</td><td>" + fmt(row.files_count) + "</td><td>" +
+          statusBadge(row.status) + "</td></tr>"
+        )
+      );
+      document.getElementById("issues-table").innerHTML = table(
+        ["課題", "モデル", "重要度", "状態"],
+        (r.issues || []).map((row) =>
+          "<tr><td>" + esc(row.title) + "</td><td class='mono'>" + esc(row.model_name || row.model_id) +
+          "</td><td class='sev-" + esc(row.severity) + "'>" + esc(SEV_JA[row.severity] || row.severity) +
+          "</td><td>" + statusBadge(row.status) + "</td></tr>"
+        )
+      );
+      if (more) more.open = moreOpen;
+    }
+
+    function renderIssues() {
+      const counts = issues.counts || {};
+      const active = (counts.open || 0) + (counts.in_progress || 0);
+      document.getElementById("iss-counts").textContent =
+        "未解決 " + active + "（未着手 " + (counts.open || 0) + " / 対応中 " + (counts.in_progress || 0) +
+        "）　解決 " + (counts.resolved || 0) + "　全 " + (counts.total || 0);
+      const filters = [
+        ["active", "未解決"],
+        ["all", "すべて"],
+        ["open", "未着手"],
+        ["in_progress", "対応中"],
+        ["resolved", "解決"],
+      ];
+      document.getElementById("iss-filters").innerHTML = filters.map(([id, label]) =>
+        '<button type="button" class="secondary' + (issueFilter === id ? " on" : "") +
+        '" data-f="' + id + '">' + label + "</button>"
+      ).join("");
+      document.getElementById("iss-filters").onclick = (ev) => {
+        const btn = ev.target.closest("button");
+        if (!btn) return;
+        issueFilter = btn.getAttribute("data-f");
+        renderIssues();
+      };
+      const rows = (issues.issues || []).filter((i) => {
+        if (issueFilter === "active") return i.status === "open" || i.status === "in_progress";
+        if (issueFilter === "all") return true;
+        return i.status === issueFilter;
+      });
+      const box = document.getElementById("issue-list");
+      if (!rows.length) {
+        box.innerHTML = '<p class="muted">該当する課題はありません。デプロイ済みモデルを選んで起票できます。</p>';
+      } else {
+        box.innerHTML = rows.map((i) =>
+          '<div class="issue-item' + (i.issue_id === selectedIssueId ? " on" : "") +
+          '" data-id="' + esc(i.issue_id) + '">' +
+          '<div class="ttl">' + esc(i.title) + "</div>" +
+          '<div class="issue-meta"><span class="sev-' + esc(i.severity) + '">' +
+          esc(SEV_JA[i.severity] || i.severity) + "</span> · " +
+          esc(ST_JA[i.status] || i.status) + " · " +
+          esc(CAT_JA[i.category] || i.category) + " · " +
+          esc(i.model_name || i.model_id) + "</div></div>"
+        ).join("");
+        box.onclick = (ev) => {
+          const item = ev.target.closest(".issue-item");
+          if (!item) return;
+          selectedIssueId = item.getAttribute("data-id");
+          const found = (issues.issues || []).find((x) => x.issue_id === selectedIssueId);
+          selectedIssue = found || selectedIssue;
+          fetch("/api/issues/" + selectedIssueId).then((r) => r.json()).then((d) => {
+            selectedIssue = d;
+            renderIssueDetail();
+            renderIssues();
+          });
+        };
+      }
+      const ae = document.activeElement;
+      const detail = document.getElementById("issue-detail");
+      if (!(ae && detail.contains(ae))) renderIssueDetail();
+    }
+
+    function renderIssueDetail() {
+      const el = document.getElementById("issue-detail");
+      const i = selectedIssue;
+      if (!i) {
+        el.innerHTML = '<p class="muted">左の一覧から課題を選ぶと、状態遷移とタイムラインが出ます。</p>';
+        return;
+      }
+      const events = i.events || [];
+      el.innerHTML =
+        "<h3 style='margin-top:0'>" + esc(i.title) + "</h3>" +
+        "<p class='muted'>" + esc(i.issue_id) + " · モデル <code>" + esc(i.model_id) + "</code> " +
+        esc(i.model_name || "") + " / " + esc(i.model_status || "") +
+        (i.package_id ? " · パッケージ " + esc(i.package_id) : "") +
+        (i.vehicle_id ? " · 車両 " + esc(i.vehicle_id) : "") + "</p>" +
+        "<p>" + esc(i.description || "（説明なし）") + "</p>" +
+        "<p>重要度 <span class='sev-" + esc(i.severity) + "'>" + esc(SEV_JA[i.severity] || i.severity) +
+        "</span>　種別 " + esc(CAT_JA[i.category] || i.category) +
+        "　状態 " + statusBadge(i.status) +
+        (i.assignee ? "　担当 " + esc(i.assignee) : "") + "</p>" +
+        (i.resolution ? "<p>解決内容: " + esc(i.resolution) + "</p>" : "") +
+        '<div class="form-grid">' +
+        '<label>コメント / 解決内容<textarea id="iss-note" placeholder="対応内容や解決メモ"></textarea></label>' +
+        "</div>" +
+        '<div class="actions">' +
+        (i.status === "open" ? '<button type="button" id="iss-start">着手する</button>' : "") +
+        (i.status === "open" || i.status === "in_progress"
+          ? '<button type="button" id="iss-resolve">解決にする</button>' +
+            '<button type="button" class="secondary" id="iss-wont">対応しない</button>'
+          : "") +
+        (i.status === "resolved" || i.status === "wont_fix" || i.status === "duplicate"
+          ? '<button type="button" class="secondary" id="iss-reopen">再オープン</button>'
+          : "") +
+        '<button type="button" class="secondary" id="iss-comment">コメントを残す</button>' +
+        "</div>" +
+        "<h4 style='margin:16px 0 0;font-size:13px'>タイムライン</h4>" +
+        '<ul class="timeline">' +
+        (events.length
+          ? events.map((e) =>
+              "<li><strong>" + esc(ST_JA[e.to_status] || e.action) + "</strong> " +
+              when(e.ts) + " · " + esc(e.actor || "") +
+              (e.from_status && e.to_status && e.from_status !== e.to_status
+                ? " · " + esc(e.from_status) + " → " + esc(e.to_status)
+                : "") +
+              (e.note ? "<div>" + esc(e.note) + "</div>" : "") +
+              "</li>"
+            ).join("")
+          : "<li>まだイベントはありません</li>") +
+        "</ul>";
+      const noteOf = () => (document.getElementById("iss-note") || {}).value || "";
+      async function patch(body) {
+        const res = await fetch("/api/issues/" + i.issue_id, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const t = await res.text();
+          document.getElementById("hint").textContent = "課題の更新に失敗: " + t;
+          return;
+        }
+        selectedIssue = await res.json();
+        selectedIssueId = selectedIssue.issue_id;
+        await loadIssues();
+        renderIssues();
+      }
+      const start = document.getElementById("iss-start");
+      if (start) start.onclick = () => patch({ status: "in_progress", note: noteOf() || "着手" });
+      const resolve = document.getElementById("iss-resolve");
+      if (resolve) resolve.onclick = () => {
+        const note = noteOf();
+        if (!note && !i.resolution) {
+          document.getElementById("hint").textContent = "解決にするにはコメント欄に解決内容を書いてください。";
+          return;
+        }
+        patch({ status: "resolved", resolution: note, note: note });
+      };
+      const wont = document.getElementById("iss-wont");
+      if (wont) wont.onclick = () => patch({ status: "wont_fix", note: noteOf() || "対応しない" });
+      const reopen = document.getElementById("iss-reopen");
+      if (reopen) reopen.onclick = () => patch({ status: "open", note: noteOf() || "再オープン" });
+      const comment = document.getElementById("iss-comment");
+      if (comment) comment.onclick = () => {
+        const note = noteOf();
+        if (!note) return;
+        patch({ note: note });
+      };
+    }
+
+    function renderFlow() {
+      const flow = document.getElementById("flow");
+      flow.innerHTML = "";
+      data.steps.forEach((s) => {
+        const el = document.createElement("div");
+        el.className = "step" + (s.id === selected ? " active" : "") + (s.id === data.hint_step ? " next" : "");
+        el.innerHTML =
+          '<div class="num">工程 ' + s.n + "</div>" +
+          "<h2>" + s.title + "</h2>" +
+          '<div class="metric">' + s.count + "</div>" +
+          '<div class="unit">' + s.unit + "</div>" +
+          '<span class="badge ' + (s.done ? "ok" : "") + '">' + (s.done ? "データあり" : "未実施") + "</span>";
+        el.onclick = () => { selected = s.id; render(); };
+        flow.appendChild(el);
+      });
+      const s = data.steps.find((x) => x.id === selected) || data.steps[0];
+      const link = LINKS[s.id];
+      document.getElementById("detail").innerHTML =
+        "<h3>工程 " + s.n + " — " + s.title + "</h3>" +
+        "<p>" + s.how + "</p>" +
+        "<p>使うもの: <code>" + s.tool + "</code>" +
+        (link ? '　<a href="' + link + '" target="_blank" rel="noreferrer">開く</a>' : "") +
+        "</p>";
+      const job = data.latest_job;
+      document.getElementById("job").textContent = job
+        ? ("最新ジョブ: " + job.kind + " / " + job.status + " / " + job.job_id)
+        : "まだジョブはありません。";
+      const box = document.getElementById("integ");
+      box.innerHTML = "";
+      const integ = data.integrations || {};
+      Object.keys(INTEG_NAMES).forEach((key) => {
+        const info = integ[key] || { ok: false, wired: false, detail: "不明" };
+        const isCore = info.core !== undefined ? info.core : CORE_TOOLS.indexOf(key) >= 0;
+        if (!isCore && !info.ok) return;
+        const pill = info.ok
+          ? (info.wired ? '<span class="pill on">データ連動</span>' : '<span class="pill off">起動のみ</span>')
+          : '<span class="pill down">未接続</span>';
+        const el = document.createElement("article");
+        el.innerHTML = "<h3>" + INTEG_NAMES[key] + " " + pill + "</h3><p>" + (info.detail || "") + "</p>";
+        box.appendChild(el);
+      });
+    }
+
+    async function runJobDemo(url, btn, idleLabel, tries) {
+      btn.disabled = true;
+      btn.textContent = "実行中…";
+      const maxTries = tries || 40;
+      try {
+        const started = await fetch(url, { method: "POST" }).then((r) => r.json());
+        const id = started.job_id;
+        for (let i = 0; i < maxTries; i++) {
+          await new Promise((x) => setTimeout(x, 2000));
+          const job = await fetch("/api/jobs/" + id).then((r) => r.json());
+          document.getElementById("hint").textContent = idleLabel + ": " + job.status;
+          if (job.status === "completed" || job.status === "failed") break;
+        }
+        await load();
+      } catch (e) {
+        document.getElementById("hint").textContent = idleLabel + "に失敗しました: " + e;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = idleLabel;
+      }
+    }
+
+    document.getElementById("tab-dash").onclick = () => { view = "dash"; render(); };
+    document.getElementById("tab-flow").onclick = () => { view = "flow"; render(); };
+    document.getElementById("tab-iss").onclick = () => { view = "issues"; render(); };
+    document.getElementById("iss-form").onsubmit = async (ev) => {
+      ev.preventDefault();
+      const modelId = document.getElementById("iss-model").value;
+      const title = document.getElementById("iss-title").value.trim();
+      if (!modelId || !title) {
+        document.getElementById("hint").textContent = "モデルとタイトルは必須です。";
+        return;
+      }
+      const btn = ev.target.querySelector("button[type=submit]");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/issues", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model_id: modelId,
+            title: title,
+            description: document.getElementById("iss-desc").value,
+            severity: document.getElementById("iss-sev").value,
+            category: document.getElementById("iss-cat").value,
+            vehicle_id: document.getElementById("iss-vehicle").value || null,
+            assignee: document.getElementById("iss-assignee").value || null,
+          }),
+        });
+        if (!res.ok) {
+          document.getElementById("hint").textContent = "起票に失敗: " + (await res.text());
+          return;
+        }
+        const created = await res.json();
+        selectedIssueId = created.issue_id;
+        selectedIssue = created;
+        document.getElementById("iss-title").value = "";
+        document.getElementById("iss-desc").value = "";
+        issueFilter = "active";
+        await loadIssues();
+        view = "issues";
+        render();
+        document.getElementById("hint").textContent = "課題を起票しました: " + created.issue_id;
+      } catch (e) {
+        document.getElementById("hint").textContent = "起票に失敗: " + e;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    document.getElementById("demo").onclick = () =>
+      runJobDemo("/api/demo", document.getElementById("demo"), "知覚デモを一巡させる", 40);
+    document.getElementById("demo-e2e").onclick = () =>
+      runJobDemo("/api/demo-e2e", document.getElementById("demo-e2e"), "E2Eデモ", 40);
+    document.getElementById("demo-yolox").onclick = () =>
+      runJobDemo("/api/demo-yolox", document.getElementById("demo-yolox"), "YOLOXデモ", 240);
+    document.getElementById("refresh").onclick = load;
+    load().catch((e) => {
+      document.getElementById("hint").textContent =
+        "Catalog に接続できません。docker compose ps で catalog / worker を確認してください。 (" + e + ")";
+    });
+    setInterval(() => load().catch(() => {}), 8000);
+  </script>
+</body>
+</html>

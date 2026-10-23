@@ -1,0 +1,13 @@
+[core]
+    remote = garage
+    autostage = true
+['remote "garage"']
+    url = s3://dvc
+    endpointurl = http://localhost:9000
+    use_ssl = false
+    region = garage
+['remote "garage-docker"']
+    url = s3://dvc
+    endpointurl = http://garage:3900
+    use_ssl = false
+    region = garage

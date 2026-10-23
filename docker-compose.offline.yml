@@ -1,0 +1,33 @@
+# 閉鎖網ではこれを重ね、Hub / PyPI へ出ないようにする。
+# docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d --no-build --pull never
+
+services:
+  postgres:
+    pull_policy: never
+  redis:
+    pull_policy: never
+  garage:
+    pull_policy: never
+  garage-init:
+    pull_policy: never
+  mlflow:
+    image: ugv-mlops-mlflow:latest
+    pull_policy: never
+  lakefs:
+    pull_policy: never
+  labelstudio:
+    pull_policy: never
+  gitea:
+    pull_policy: never
+  catalog:
+    image: ugv-mlops-catalog:latest
+    pull_policy: never
+  worker:
+    image: ugv-mlops-worker:latest
+    pull_policy: never
+  prometheus:
+    pull_policy: never
+  grafana:
+    pull_policy: never
+  portal:
+    pull_policy: never

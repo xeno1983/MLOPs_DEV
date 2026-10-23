@@ -1,0 +1,9 @@
+.venv
+__pycache__
+data/work
+data/cache
+data/keys
+data/models
+data/annotate
+mlruns
+.git
