@@ -1,0 +1,2 @@
+# parse は Worker の bag_pipeline（DVC GUI の foreach stage 相当）。
+# ポインタは dvc add。実体は Garage s3://dvc。学習ホットパスでは push しない。

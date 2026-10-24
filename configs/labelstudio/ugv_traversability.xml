@@ -1,0 +1,14 @@
+<View>
+  <Header value="UGV 走行可能性（画素／領域）"/>
+  <Image name="image" value="$image"/>
+  <RectangleLabels name="label" toName="image">
+    <Label value="go" background="#43a047"/>
+    <Label value="slow" background="#fdd835"/>
+    <Label value="nogo" background="#e53935"/>
+  </RectangleLabels>
+  <Choices name="global" toName="image" choice="single">
+    <Choice value="go"/>
+    <Choice value="slow"/>
+    <Choice value="nogo"/>
+  </Choices>
+</View>

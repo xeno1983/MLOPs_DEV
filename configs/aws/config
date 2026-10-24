@@ -1,0 +1,5 @@
+[default]
+region = garage
+s3 =
+    addressing_style = path
+    signature_version = s3v4

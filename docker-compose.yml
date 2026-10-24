@@ -1,0 +1,379 @@
+# 既定（プロファイルなし）= 中核: bag取込・パース・アノテーション・データセット・学習結果
+#   postgres garage garage-init catalog worker portal mlflow labelstudio
+# 拡張: docker compose --profile full up -d
+#   redis lakefs gitea prometheus grafana
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schemas/00-init.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
+      - ./schemas:/schema:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    profiles: ["full"]
+    command: ["redis-server", "--save", "60", "1"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  garage:
+    image: dxflrs/garage:v2.3.0
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: ${MINIO_ROOT_USER}
+      GARAGE_DEFAULT_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      GARAGE_DEFAULT_BUCKET: raw
+    volumes:
+      - ./configs/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    ports:
+      - "9000:3900"
+      - "3903:3903"
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+    restart: unless-stopped
+
+  garage-init:
+    image: python:3.12-slim-bookworm
+    depends_on:
+      garage:
+        condition: service_healthy
+    environment:
+      GARAGE_ADMIN_URL: http://garage:3903
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
+      GARAGE_DEFAULT_ACCESS_KEY: ${MINIO_ROOT_USER}
+    volumes:
+      - ./scripts/garage_init.py:/init.py:ro
+    command: ["python", "/init.py"]
+    restart: "no"
+
+  mlflow:
+    build:
+      context: ./services/mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://garage:3900
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: garage
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONFIG_FILE: /aws/config
+      MLFLOW_S3_IGNORE_TLS_WARNING: "true"
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+      - --artifacts-destination=s3://mlflow
+      - --serve-artifacts
+    volumes:
+      - ./configs/aws/config:/aws/config:ro
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  lakefs:
+    image: treeverse/lakefs:latest
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
+    environment:
+      LAKEFS_DATABASE_TYPE: postgres
+      LAKEFS_DATABASE_CONNECTION_STRING: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/lakefs?sslmode=disable
+      LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/lakefs?sslmode=disable
+      LAKEFS_AUTH_ENCRYPT_SECRET_KEY: ${LAKEFS_AUTH_ENCRYPT_SECRET_KEY}
+      LAKEFS_BLOCKSTORE_TYPE: s3
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://garage:3900
+      LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
+      LAKEFS_BLOCKSTORE_S3_DISCOVER_BUCKET_REGION: "false"
+      LAKEFS_BLOCKSTORE_S3_REGION: garage
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      LAKEFS_STATS_ENABLED: "false"
+      LAKEFS_SECURITY_CHECK_LATEST_VERSION: "false"
+      LAKEFS_SECURITY_AUDIT_CHECK_INTERVAL: 87600h
+      LAKEFS_INSTALLATION_USER_NAME: ugv
+      LAKEFS_INSTALLATION_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
+      LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
+      LAKEFS_GATEWAYS_S3_DOMAIN_NAME: s3.local
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  labelstudio:
+    image: heartexlabs/label-studio:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
+    environment:
+      DJANGO_DB: default
+      POSTGRE_NAME: labelstudio
+      POSTGRE_USER: ${POSTGRES_USER}
+      POSTGRE_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRE_PORT: 5432
+      POSTGRE_HOST: postgres
+      LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK: "true"
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_USERNAME}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD}
+      CSRF_TRUSTED_ORIGINS: http://localhost,http://127.0.0.1
+      COLLECT_ANALYTICS: "False"
+    ports:
+      - "8081:8080"
+    volumes:
+      - lsdata:/label-studio/data
+    restart: unless-stopped
+
+  gitea:
+    image: gitea/gitea:1.22.6
+    profiles: ["full"]
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__security__SECRET_KEY: ${GITEA_SECRET_KEY}
+      GITEA__security__INTERNAL_TOKEN: ${GITEA_INTERNAL_TOKEN}
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__DOMAIN: localhost
+      GITEA__server__ROOT_URL: http://localhost:3000/
+      GITEA__server__HTTP_PORT: 3000
+      GITEA__service__DISABLE_REGISTRATION: "false"
+      GITEA__cron.update_checker__ENABLED: "false"
+      GITEA__other__OFFLINE_MODE: "true"
+    volumes:
+      - giteadata:/data
+    ports:
+      - "3000:3000"
+      - "2222:22"
+    restart: unless-stopped
+
+  catalog:
+    build:
+      context: .
+      dockerfile: services/runtime/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      garage-init:
+        condition: service_completed_successfully
+    environment:
+      CATALOG_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/catalog
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: garage:3900
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SECURE: "false"
+      S3_REGION: garage
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: garage
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONFIG_FILE: /app/configs/aws/config
+      MLFLOW_S3_ENDPOINT_URL: http://garage:3900
+      ARTIFACT_POLICY_PATH: /app/configs/artifact_policy.yaml
+      SIGNING_KEY_PATH: /keys/ed25519.pem
+      SIGNING_PUB_PATH: /keys/ed25519.pub
+      DEFAULT_LEARNING_STAGE: ${DEFAULT_LEARNING_STAGE}
+      INBOX_DIR: /data/inbox
+      WORK_DIR: /data/work
+      LABEL_STUDIO_URL: http://labelstudio:8080
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_USERNAME}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD}
+      SAMPLE_PUBLIC_BASE: http://localhost:8000
+      LAKEFS_URL: http://lakefs:8000
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
+      GITEA_URL: http://gitea:3000
+      GRAFANA_URL: http://grafana:3000
+      PROMETHEUS_URL: http://prometheus:9090
+      ROSBAG_TOPICS: ${ROSBAG_TOPICS:-}
+      ROSBAG_FRAME_STRIDE: ${ROSBAG_FRAME_STRIDE:-5}
+      ROSBAG_MAX_FRAMES_PER_TOPIC: ${ROSBAG_MAX_FRAMES_PER_TOPIC:-400}
+      ROSBAG_LIDAR_STRIDE: ${ROSBAG_LIDAR_STRIDE:-20}
+      ROSBAG_MAX_LIDAR_KEYFRAMES: ${ROSBAG_MAX_LIDAR_KEYFRAMES:-80}
+      E2E_ACTION_MAX_DT_SEC: ${E2E_ACTION_MAX_DT_SEC:-0.25}
+      DVC_ROOT: /app/repo
+      DVC_REMOTE: garage-docker
+      ANNOTATE_DIR: /data/annotate
+      AUTOWARE_E2E_ROOT: /autoware_e2e
+      XTREME1_URL: ${XTREME1_URL:-http://host.docker.internal:8190}
+    volumes:
+      - ./data/inbox:/data/inbox
+      - ./data/work:/data/work
+      - ./data/keys:/keys
+      - ./configs:/app/configs:ro
+      - ./src:/app/src:ro
+      - ./:/app/repo
+      - ./data/annotate:/data/annotate
+      - ${AUTOWARE_E2E_ROOT:-./data/autoware_stub}:/autoware_e2e:ro
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/runtime/Dockerfile.worker
+    command: ["python", "-m", "ugv_mlops.worker"]
+    depends_on:
+      catalog:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    environment:
+      CATALOG_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/catalog
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: garage:3900
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SECURE: "false"
+      S3_REGION: garage
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: garage
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONFIG_FILE: /app/configs/aws/config
+      MLFLOW_S3_ENDPOINT_URL: http://garage:3900
+      ARTIFACT_POLICY_PATH: /app/configs/artifact_policy.yaml
+      SIGNING_KEY_PATH: /keys/ed25519.pem
+      SIGNING_PUB_PATH: /keys/ed25519.pub
+      DEFAULT_LEARNING_STAGE: ${DEFAULT_LEARNING_STAGE}
+      INBOX_DIR: /data/inbox
+      WORK_DIR: /data/work
+      LABEL_STUDIO_URL: http://labelstudio:8080
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_USERNAME}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD}
+      SAMPLE_PUBLIC_BASE: http://localhost:8000
+      LAKEFS_URL: http://lakefs:8000
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
+      GITEA_URL: http://gitea:3000
+      GRAFANA_URL: http://grafana:3000
+      PROMETHEUS_URL: http://prometheus:9090
+      ROSBAG_TOPICS: ${ROSBAG_TOPICS:-}
+      ROSBAG_FRAME_STRIDE: ${ROSBAG_FRAME_STRIDE:-5}
+      ROSBAG_MAX_FRAMES_PER_TOPIC: ${ROSBAG_MAX_FRAMES_PER_TOPIC:-400}
+      ROSBAG_LIDAR_STRIDE: ${ROSBAG_LIDAR_STRIDE:-20}
+      ROSBAG_MAX_LIDAR_KEYFRAMES: ${ROSBAG_MAX_LIDAR_KEYFRAMES:-80}
+      E2E_ACTION_MAX_DT_SEC: ${E2E_ACTION_MAX_DT_SEC:-0.25}
+      YOLOX_WEIGHTS_PATH: /data/models/yolox_nano.pth
+      YOLOX_CACHE_DIR: /data/cache
+      YOLOX_IMGSZ: ${YOLOX_IMGSZ:-416}
+      YOLOX_TRAIN_STEPS: ${YOLOX_TRAIN_STEPS:-8}
+      YOLOX_MAX_TRAIN_IMAGES: ${YOLOX_MAX_TRAIN_IMAGES:-24}
+      DVC_ROOT: /app/repo
+      DVC_REMOTE: garage-docker
+      ANNOTATE_DIR: /data/annotate
+      AUTOWARE_E2E_ROOT: /autoware_e2e
+      XTREME1_URL: ${XTREME1_URL:-http://host.docker.internal:8190}
+    volumes:
+      - ./data/inbox:/data/inbox
+      - ./data/work:/data/work
+      - ./data/keys:/keys
+      - ./configs:/app/configs:ro
+      - ./src:/app/src:ro
+      - ./:/app/repo
+      - ./data/annotate:/data/annotate
+      - ${AUTOWARE_E2E_ROOT:-./data/autoware_stub}:/autoware_e2e:ro
+      - ./data/models:/data/models
+      - ./data/cache:/data/cache
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["full"]
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["full"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: http://localhost:3001
+      GF_USERS_DEFAULT_THEME: dark
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWSFEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./configs/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"
+    restart: unless-stopped
+
+  portal:
+    image: nginx:1.27-alpine
+    depends_on:
+      - catalog
+      - mlflow
+    volumes:
+      - ./configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services/portal:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  garage-meta:
+  garage-data:
+  lsdata:
+  giteadata:
+  promdata:
+  grafanadata:

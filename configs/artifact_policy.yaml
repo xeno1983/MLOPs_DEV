@@ -1,0 +1,84 @@
+# 防衛UGV向け 学習段ごとの許容アーティファクト（ホワイトリスト）
+# S0 推論固定 … S1 車載適応 … S2 戦域集約 … S3 前線学習 … S4 後方フル学習
+
+stages:
+  S0:
+    description: 推論固定（学習なし）
+    allowed_artifacts: []
+    max_bytes: 0
+    requires_outbound: false
+  S1:
+    description: 車載・準オンライン適応
+    allowed_artifacts:
+      - adapter
+      - calibration
+      - threshold
+      - normalizer
+    max_bytes: 8388608
+    requires_outbound: false
+  S2:
+    description: 戦域ローカル集約
+    allowed_artifacts:
+      - adapter
+      - prototype
+      - distilled_student
+      - calibration
+    max_bytes: 33554432
+    requires_outbound: false
+  S3:
+    description: 前線拠点（隔離学習）
+    allowed_artifacts:
+      - full_weights
+      - adapter
+      - onnx
+      - joblib
+      - calibration
+      - threshold
+    max_bytes: 1073741824
+    requires_outbound: false
+  S4:
+    description: 後方フル MLOps
+    allowed_artifacts:
+      - full_weights
+      - adapter
+      - onnx
+      - joblib
+      - dataset
+      - calibration
+      - threshold
+    max_bytes: 10737418240
+    requires_outbound: false
+
+gates:
+  staging:
+    min_accuracy: 0.70
+    max_false_positive_rate: 0.20
+    max_mae_steer: 0.45
+    max_mae_speed: 2.0
+    min_map50: 0.05
+    require_signature: false
+    require_holdout: true
+    allowed_mission_modes: [training, maintenance, exercise, operation]
+  production:
+    min_accuracy: 0.82
+    max_false_positive_rate: 0.08
+    max_mae_steer: 0.25
+    max_mae_speed: 1.0
+    min_map50: 0.20
+    require_signature: true
+    require_holdout: true
+    allowed_mission_modes: [training, maintenance]
+    require_integrity: true
+
+tasks:
+  obstacle_cls:
+    classes: [clear, obstacle, person]
+    primary_metric: accuracy
+  detection:
+    classes: [person, vehicle, obstacle, animal, unknown]
+    primary_metric: map50
+  e2e:
+    primary_metric: mae_steer
+    max_mae_steer: 0.40
+    max_mae_speed: 1.50
+
