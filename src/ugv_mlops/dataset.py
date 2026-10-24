@@ -30,12 +30,13 @@ def build_dataset(
     format_name: str = "imagefolder",
     train_ratio: float = 0.7,
     val_ratio: float = 0.15,
+    mission_id: str | None = None,
 ) -> dict:
     """Build a versioned dataset. task=obstacle_cls uses labels; task=e2e aligns bag sensors."""
     if task in {"e2e", "e2e_sequence", "end_to_end"}:
         from ugv_mlops.e2e import build_e2e_dataset
 
-        return build_e2e_dataset(dataset_id, name, train_ratio, val_ratio)
+        return build_e2e_dataset(dataset_id, name, train_ratio, val_ratio, mission_id=mission_id)
     if task in {"detection", "yolox", "yolox_nano"}:
         from ugv_mlops.detect_dataset import build_detection_dataset
 

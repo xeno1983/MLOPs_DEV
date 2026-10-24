@@ -50,6 +50,16 @@ stages:
     requires_outbound: false
 
 gates:
+  smoke:
+    description: 公開サンプル・12秒クリップなどパイプライン確認用。staging より緩い。
+    min_accuracy: 0.0
+    max_false_positive_rate: 1.0
+    max_mae_steer: 2.0
+    max_mae_speed: 5.0
+    min_map50: 0.0
+    require_signature: false
+    require_holdout: true
+    allowed_mission_modes: [training, maintenance, exercise, operation]
   staging:
     min_accuracy: 0.70
     max_false_positive_rate: 0.20

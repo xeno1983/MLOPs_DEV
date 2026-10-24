@@ -345,6 +345,57 @@
     .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
     .filters button { padding: 5px 10px; font-size: 12px; }
     .filters button.on { background: var(--acc); color: #042421; }
+    .thumbs {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+      gap: 8px;
+    }
+    .thumbs figure { margin: 0; }
+    .thumbs img {
+      width: 100%;
+      height: 96px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #121a21;
+      display: block;
+    }
+    .thumbs figcaption { font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .viz {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    @media (max-width: 900px) { .viz { grid-template-columns: 1fr; } }
+    canvas.plot {
+      width: 100%;
+      height: 240px;
+      background: #121a21;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      display: block;
+    }
+    .mission-list { display: grid; gap: 6px; max-height: 420px; overflow: auto; }
+    .mission-list button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: #121a21;
+      color: var(--text);
+      font-weight: 600;
+      padding: 8px 10px;
+    }
+    .mission-list button.on { outline: 1px solid var(--acc); }
+    .mission-list button span { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .chips i {
+      font-style: normal;
+      font-size: 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #121a21;
+    }
   </style>
 </head>
 <body>
@@ -362,6 +413,7 @@
   <div class="wrap">
     <div class="tabs">
       <button id="tab-dash" class="on" type="button">ダッシュボード</button>
+      <button id="tab-data" type="button">データ</button>
       <button id="tab-flow" type="button">8工程フロー</button>
       <button id="tab-iss" type="button">課題</button>
     </div>
@@ -371,6 +423,7 @@
         <button id="demo" type="button">知覚デモを一巡させる</button>
         <button id="demo-e2e" class="secondary" type="button">E2Eデモ</button>
         <button id="demo-yolox" class="secondary" type="button">YOLOXデモ</button>
+        <button id="demo-rosbag" class="secondary" type="button">rosbag2デモ</button>
         <button id="refresh" class="secondary" type="button">更新</button>
       </div>
     </div>
@@ -444,6 +497,36 @@
           <div id="issues-table"></div>
         </section>
       </details>
+    </div>
+
+    <div id="view-data" class="hidden">
+      <div class="grid2b">
+        <section class="card">
+          <h3>撮りためたミッション</h3>
+          <p class="muted">取込済みの bag / 画像の中身です。選ぶとカメラ・操作・LiDAR を表示します。</p>
+          <div class="mission-list" id="data-missions"></div>
+        </section>
+        <section class="card">
+          <h3 id="data-title">中身</h3>
+          <p class="muted" id="data-meta">左からミッションを選んでください。</p>
+          <div class="chips" id="data-mods"></div>
+          <div id="data-topics"></div>
+        </section>
+      </div>
+      <section class="card" style="margin-top:12px">
+        <h3>カメラ</h3>
+        <div class="thumbs" id="data-thumbs"></div>
+      </section>
+      <div class="viz">
+        <section class="card">
+          <h3>操作・センサ時系列</h3>
+          <canvas id="data-chart" class="plot" width="720" height="240"></canvas>
+        </section>
+        <section class="card">
+          <h3>LiDAR（上から見た点群）</h3>
+          <canvas id="data-lidar" class="plot" width="720" height="240"></canvas>
+        </section>
+      </div>
     </div>
 
     <div id="view-flow" class="hidden">
@@ -554,7 +637,22 @@
       prometheus: "Prometheus",
     };
     const CORE_TOOLS = ["catalog", "postgres", "garage", "mlflow", "labelstudio"];
+    const TASK_META = {
+      obstacle_cls: { id: "ds-obstacle-01", name: "obstacle v1" },
+      detection: { id: "ds-detect-01", name: "detection v1" },
+      e2e: { id: "ds-e2e-01", name: "e2e v1" },
+    };
+    const PACKABLE = { staging: 1, canary: 1, production: 1 };
+    const ANNOTATE_TOOL_META = {
+      labelstudio: { kind: "camera", url: "http://127.0.0.1:8081", go: "Label Studio に投入" },
+      salt: { kind: "lidar", url: "", go: "SALT 用に点群を出す" },
+      xtreme1: { kind: "both", url: "http://127.0.0.1:8190", go: "Xtreme1 用に画像と点群を出す" },
+    };
     let selected = null;
+    let lastResult = {};
+    let dataMissions = [];
+    let selectedMission = null;
+    let previewLoadedFor = null;
     let data = null;
     let dash = null;
     let view = "dash";
@@ -680,6 +778,10 @@
       if (!selected) selected = data.hint_step;
       dash = await loadDashboard(data);
       await loadIssues();
+      try {
+        const dm = await fetch("/api/data/missions").then((r) => r.ok ? r.json() : { missions: [] });
+        dataMissions = dm.missions || [];
+      } catch (_) {}
       render();
     }
 
@@ -786,14 +888,216 @@
     function render() {
       document.getElementById("hint").textContent = "次: " + data.hint;
       document.getElementById("view-dash").classList.toggle("hidden", view !== "dash");
+      document.getElementById("view-data").classList.toggle("hidden", view !== "data");
       document.getElementById("view-flow").classList.toggle("hidden", view !== "flow");
       document.getElementById("view-issues").classList.toggle("hidden", view !== "issues");
       document.getElementById("tab-dash").classList.toggle("on", view === "dash");
+      document.getElementById("tab-data").classList.toggle("on", view === "data");
       document.getElementById("tab-flow").classList.toggle("on", view === "flow");
       document.getElementById("tab-iss").classList.toggle("on", view === "issues");
       renderDash();
+      renderData();
       renderFlow();
       renderIssues();
+    }
+
+    function renderData() {
+      if (view !== "data") return;
+      const box = document.getElementById("data-missions");
+      if (!box) return;
+      if (!selectedMission && lastResult.mission_id) selectedMission = lastResult.mission_id;
+      if (!selectedMission && dataMissions.length) selectedMission = dataMissions[0].mission_id;
+      box.innerHTML = dataMissions.length
+        ? dataMissions.map((m) => {
+            const on = m.mission_id === selectedMission ? " on" : "";
+            const bits = [];
+            if (m.cameras) bits.push("カメラ " + m.cameras);
+            if (m.lidar) bits.push("LiDAR " + m.lidar);
+            if (m.series) bits.push("時系列 " + m.series);
+            if (!m.ingested) bits.push("未取込");
+            return "<button type=\"button\" class=\"" + on.trim() + "\" data-mid=\"" + esc(m.mission_id) +
+              "\">" + esc(m.mission_id) + "<span>" + esc(bits.join(" / ") || "中身なし") + "</span></button>";
+          }).join("")
+        : "<p class=\"muted\">取込済みのミッションがありません。工程2で inbox から取り込んでください。</p>";
+      box.onclick = (ev) => {
+        const btn = ev.target.closest("button[data-mid]");
+        if (!btn) return;
+        openMission(btn.getAttribute("data-mid"));
+      };
+      if (selectedMission && previewLoadedFor !== selectedMission) openMission(selectedMission);
+    }
+
+    async function openMission(id) {
+      selectedMission = id;
+      previewLoadedFor = id;
+      lastResult.mission_id = id;
+      const title = document.getElementById("data-title");
+      const meta = document.getElementById("data-meta");
+      if (title) title.textContent = id;
+      if (meta) meta.textContent = "読み込み中…";
+      document.querySelectorAll("#data-missions button").forEach((b) => {
+        b.classList.toggle("on", b.getAttribute("data-mid") === id);
+      });
+      try {
+        const res = await fetch("/api/data/missions/" + encodeURIComponent(id));
+        const prev = await res.json();
+        if (!res.ok) throw new Error(prev.detail || res.statusText);
+        paintPreview(prev);
+      } catch (e) {
+        if (meta) meta.textContent = "読み込み失敗: " + e;
+      }
+    }
+
+    function paintPreview(prev) {
+      const meta = document.getElementById("data-meta");
+      const mods = prev.modalities || {};
+      const bits = Object.keys(mods).map((k) => k + " " + mods[k]);
+      if (meta) {
+        meta.textContent =
+          (prev.ingested ? "取込済み " + fmt(prev.samples) + " サンプル" : "まだ取込前") +
+          "　ラベル " + fmt(prev.labeled) +
+          (prev.vehicle_id ? "　車両 " + prev.vehicle_id : "") +
+          (prev.bags && prev.bags.length ? "　bag " + prev.bags.length : "");
+      }
+      document.getElementById("data-mods").innerHTML = bits.length
+        ? bits.map((b) => "<i>" + esc(b) + "</i>").join("")
+        : "<i>センサ情報なし</i>";
+      const topics = prev.topics || [];
+      document.getElementById("data-topics").innerHTML = topics.length
+        ? "<p class=\"muted\">トピック</p><div class=\"chips\">" +
+          topics.slice(0, 24).map((t) => {
+            const name = typeof t === "string" ? t : (t.topic || "");
+            const kind = typeof t === "string" ? "" : (t.kind || t.msgtype || "");
+            return "<i>" + esc(name) + (kind ? " · " + esc(kind) : "") + "</i>";
+          }).join("") + "</div>"
+        : "";
+      const thumbs = document.getElementById("data-thumbs");
+      const cams = prev.cameras || [];
+      thumbs.innerHTML = cams.length
+        ? cams.map((c) =>
+            "<figure><img src=\"/api/samples/" + encodeURIComponent(c.sample_id) +
+            "/file\" alt=\"\" /><figcaption>" + esc(c.modality || "") +
+            (c.ts ? " · " + when(c.ts) : "") + "</figcaption></figure>"
+          ).join("")
+        : "<p class=\"muted\">カメラ画像はありません。bag 取込後にここに出ます。</p>";
+      const series = prev.series || {};
+      const action = series.action || series.cmd_vel || {};
+      const imu = series.imu || {};
+      const odom = series.odom || {};
+      if ((action.points || []).length) drawSeries(document.getElementById("data-chart"), action.points, ["speed", "steer"], "cmd_vel");
+      else if ((imu.points || []).length) drawSeries(document.getElementById("data-chart"), imu.points, ["ax", "ay", "az"], "imu");
+      else if ((odom.points || []).length) drawPath(document.getElementById("data-chart"), odom.points, "x", "y", "odom");
+      else clearCanvas(document.getElementById("data-chart"), "時系列なし");
+      const lidar = prev.lidar || {};
+      if ((lidar.x || []).length) drawLidar(document.getElementById("data-lidar"), lidar);
+      else if ((odom.points || []).length) drawPath(document.getElementById("data-lidar"), odom.points, "x", "y", "軌跡");
+      else clearCanvas(document.getElementById("data-lidar"), "点群なし");
+    }
+
+    function clearCanvas(cv, msg) {
+      if (!cv) return;
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#121a21";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.fillStyle = "#93a3b3";
+      ctx.font = "13px Segoe UI, sans-serif";
+      ctx.fillText(msg || "", 16, 28);
+    }
+
+    function drawSeries(cv, points, keys, title) {
+      if (!cv) return;
+      const ctx = cv.getContext("2d");
+      const w = cv.width, h = cv.height;
+      ctx.fillStyle = "#121a21";
+      ctx.fillRect(0, 0, w, h);
+      const colors = ["#3dd6c6", "#7eb6ff", "#e0b15b"];
+      keys.forEach((key, ki) => {
+        const vals = points.map((p) => Number(p[key])).filter((n) => Number.isFinite(n));
+        if (vals.length < 2) return;
+        const min = Math.min.apply(null, vals);
+        const max = Math.max.apply(null, vals);
+        const span = max - min || 1;
+        ctx.beginPath();
+        ctx.strokeStyle = colors[ki % colors.length];
+        ctx.lineWidth = 1.6;
+        vals.forEach((v, i) => {
+          const x = 24 + (i / (vals.length - 1)) * (w - 36);
+          const y = h - 18 - ((v - min) / span) * (h - 36);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.fillStyle = colors[ki % colors.length];
+        ctx.font = "11px Segoe UI, sans-serif";
+        ctx.fillText(key, 24 + ki * 70, 16);
+      });
+      ctx.fillStyle = "#93a3b3";
+      ctx.font = "11px Segoe UI, sans-serif";
+      ctx.fillText(title + " n=" + points.length, w - 140, 16);
+    }
+
+    function drawPath(cv, points, xk, yk, title) {
+      if (!cv) return;
+      const xs = points.map((p) => Number(p[xk])).filter((n) => Number.isFinite(n));
+      const ys = points.map((p) => Number(p[yk])).filter((n) => Number.isFinite(n));
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#121a21";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      if (xs.length < 2) {
+        clearCanvas(cv, title + " 不足");
+        return;
+      }
+      const minx = Math.min.apply(null, xs), maxx = Math.max.apply(null, xs);
+      const miny = Math.min.apply(null, ys), maxy = Math.max.apply(null, ys);
+      const span = Math.max(maxx - minx, maxy - miny, 1e-3);
+      const pad = 20;
+      const s = Math.min((cv.width - pad * 2) / span, (cv.height - pad * 2) / span);
+      ctx.beginPath();
+      ctx.strokeStyle = "#3dd6c6";
+      ctx.lineWidth = 1.5;
+      xs.forEach((x, i) => {
+        const px = pad + (x - minx) * s;
+        const py = cv.height - pad - (ys[i] - miny) * s;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+      ctx.fillStyle = "#93a3b3";
+      ctx.font = "11px Segoe UI, sans-serif";
+      ctx.fillText(title + " n=" + xs.length, 16, 16);
+    }
+
+    function drawLidar(cv, lidar) {
+      if (!cv) return;
+      const xs = lidar.x || [], ys = lidar.y || [], zs = lidar.z || [];
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#121a21";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      if (!xs.length) {
+        clearCanvas(cv, "点群なし");
+        return;
+      }
+      let minx = xs[0], maxx = xs[0], miny = ys[0], maxy = ys[0];
+      xs.forEach((x, i) => {
+        if (x < minx) minx = x; if (x > maxx) maxx = x;
+        if (ys[i] < miny) miny = ys[i]; if (ys[i] > maxy) maxy = ys[i];
+      });
+      const span = Math.max(maxx - minx, maxy - miny, 1e-3);
+      const pad = 16;
+      const s = Math.min((cv.width - pad * 2) / span, (cv.height - pad * 2) / span);
+      let zmin = zs[0] || 0, zmax = zs[0] || 0;
+      zs.forEach((z) => { if (z < zmin) zmin = z; if (z > zmax) zmax = z; });
+      const zspan = zmax - zmin || 1;
+      for (let i = 0; i < xs.length; i++) {
+        const t = ((zs[i] || 0) - zmin) / zspan;
+        ctx.fillStyle = "rgb(" + Math.round(61 + t * 160) + "," + Math.round(214 - t * 80) + "," + Math.round(198 - t * 40) + ")";
+        const px = pad + (xs[i] - minx) * s;
+        const py = cv.height - pad - (ys[i] - miny) * s;
+        ctx.fillRect(px, py, 1.5, 1.5);
+      }
+      ctx.fillStyle = "#93a3b3";
+      ctx.font = "11px Segoe UI, sans-serif";
+      ctx.fillText("点 " + fmt(lidar.n) + (lidar.shown ? " / 表示 " + lidar.shown : ""), 16, 16);
     }
 
     function renderDash() {
@@ -867,7 +1171,7 @@
       });
 
       const kpis = [
-        ["サンプル", k.samples, "", "flow", "ingest"],
+        ["サンプル", k.samples, "", "data", ""],
         ["ラベル済み", k.labeled, "", "flow", "annotate"],
         ["データセット", k.datasets, "", "flow", "dataset"],
         ["合格モデル", k.passed, "", "flow", "gate"],
@@ -887,6 +1191,7 @@
         const go = box.getAttribute("data-go");
         const step = box.getAttribute("data-step");
         if (go === "issues") { view = "issues"; render(); return; }
+        if (go === "data") { view = "data"; render(); return; }
         if (go === "flow") {
           if (step) selected = step;
           view = "flow";
@@ -932,6 +1237,7 @@
       const KIND_JA = {
         ingest: "取込", build_dataset: "データセット", train: "学習", gate: "ゲート",
         package: "梱包", demo: "知覚デモ", demo_e2e: "E2Eデモ", demo_yolox: "YOLOXデモ",
+        demo_rosbag: "rosbag2デモ",
       };
       const feed = [];
       (r.jobs || []).forEach((row) => feed.push({
@@ -990,10 +1296,19 @@
       document.getElementById("missions-table").innerHTML = table(
         ["ミッション", "車両", "区分", "サンプル"],
         (r.missions || []).map((row) =>
-          "<tr><td class='mono'>" + esc(row.mission_id) + "</td><td>" + esc(row.vehicle_id) +
+          "<tr data-mid=\"" + esc(row.mission_id) + "\" style=\"cursor:pointer\"><td class='mono'>" +
+          esc(row.mission_id) + "</td><td>" + esc(row.vehicle_id) +
           "</td><td>" + esc(row.classification) + "</td><td>" + fmt(row.samples) + "</td></tr>"
         )
       );
+      document.getElementById("missions-table").onclick = (ev) => {
+        const tr = ev.target.closest("tr[data-mid]");
+        if (!tr) return;
+        selectedMission = tr.getAttribute("data-mid");
+        previewLoadedFor = null;
+        view = "data";
+        render();
+      };
       document.getElementById("datasets-table").innerHTML = table(
         ["ID", "タスク", "版", "件数"],
         (r.datasets || []).map((row) => {
@@ -1188,6 +1503,15 @@
       return json;
     }
 
+    function rememberResult(raw) {
+      if (!raw) return;
+      let parsed = raw;
+      if (typeof raw === "string") {
+        try { parsed = JSON.parse(raw); } catch { return; }
+      }
+      if (parsed && typeof parsed === "object") Object.assign(lastResult, parsed);
+    }
+
     async function waitJob(jobId, label, tries) {
       const maxTries = tries || 90;
       const jobEl = document.getElementById("job");
@@ -1199,7 +1523,7 @@
         jobEl.textContent = line;
         hint.textContent = line;
         if (job.status === "completed" || job.status === "failed") {
-          await load();
+          rememberResult(job.result_json);
           return job;
         }
       }
@@ -1208,19 +1532,45 @@
       return { status: "running", job_id: jobId };
     }
 
-    async function runCatalog(path, body, label, btn, idleLabel, tries) {
+    async function finishStep(stepId, job) {
+      if (job && job.status === "failed") {
+        await load();
+        selected = stepId;
+        view = "flow";
+        render();
+        return job;
+      }
+      await load();
+      if (stepId === "annotate" && data.hint_step === "annotate") {
+        selected = "annotate";
+        view = "flow";
+        render();
+        return job;
+      }
+      if (data.hint_step && data.hint_step !== stepId) {
+        selected = data.hint_step;
+        view = "flow";
+        render();
+      }
+      return job;
+    }
+
+    async function runCatalog(path, body, label, btn, idleLabel, tries, stepId) {
       if (btn) { btn.disabled = true; btn.textContent = "実行中…"; }
       const jobEl = document.getElementById("job");
       try {
         jobEl.textContent = label + " を投入しています…";
         const started = await postJson(path, body);
         if (!started.job_id) {
+          rememberResult(started);
           jobEl.textContent = label + ": " + JSON.stringify(started);
           document.getElementById("hint").textContent = jobEl.textContent;
-          await load();
+          await finishStep(stepId, { status: "completed", result_json: started });
           return started;
         }
-        return await waitJob(started.job_id, label, tries);
+        const job = await waitJob(started.job_id, label, tries);
+        await finishStep(stepId, job);
+        return job;
       } catch (e) {
         const msg = label + " に失敗しました: " + e.message;
         jobEl.textContent = msg;
@@ -1254,6 +1604,7 @@
           '<select id="act-inbox"><option value="">読み込み中…</option></select>' +
           "<p>bag や画像をそのフォルダにコピーしてから、次の工程「取込」を実行します。</p>" +
           '<button type="button" id="act-go">フォルダを再読込</button>' +
+          '<button type="button" class="secondary" id="act-next">取込へ進む</button>' +
           "</div>";
       } else if (s.id === "ingest") {
         form =
@@ -1275,12 +1626,25 @@
           '<div class="form-grid">' +
           "<label>ミッション</label>" +
           '<select id="act-mission"><option value="">読み込み中…</option></select>' +
+          "<label>アノテーションツール</label>" +
+          '<select id="act-tool">' +
+          '<option value="labelstudio">Label Studio（画像クラス / bbox）</option>' +
+          '<option value="salt">SALT（LiDAR 点群）</option>' +
+          '<option value="xtreme1">Xtreme1（カメラと点群の確認）</option>' +
+          "</select>" +
           "<label>対象</label>" +
           '<select id="act-kind">' +
+          '<option value="auto">ツールの既定</option>' +
           '<option value="camera">camera</option>' +
           '<option value="lidar">lidar</option>' +
+          '<option value="both">camera + lidar</option>' +
           "</select>" +
+          '<p id="act-tool-help" class="muted">画像クラスは Label Studio。点群は SALT。突き合わせ確認は Xtreme1。</p>' +
           '<button type="button" id="act-go">Label Studio に投入</button>' +
+          "<label>結果 jsonl（SALT / Xtreme1 から戻す）</label>" +
+          '<input id="act-jsonl" placeholder="data/annotate/M-AVBAG-001/export.jsonl" />' +
+          '<button type="button" class="secondary" id="act-import">結果を Catalog に戻す</button>' +
+          '<button type="button" class="secondary" id="act-next">E2E / ラベル済みならデータセットへ</button>' +
           "</div>";
       } else if (s.id === "dataset") {
         form =
@@ -1352,50 +1716,55 @@
       );
     }
 
+    function applyPrefill(id, value) {
+      const el = document.getElementById(id);
+      if (!el || value == null || value === "") return;
+      const v = String(value);
+      if (el.tagName === "SELECT") {
+        if ([...el.options].some((o) => o.value === v)) el.value = v;
+      } else {
+        el.value = v;
+      }
+    }
+
     async function bindStepForm(s, gen) {
       const go = document.getElementById("act-go");
       if (!go) return;
-      const [inbox, missions, datasets, models, packages] = await Promise.all([
-        fetch("/api/inbox").then((r) => r.ok ? r.json() : { missions: [] }).catch(() => ({ missions: [] })),
-        fetch("/api/missions").then((r) => r.ok ? r.json() : { missions: [] }).catch(() => ({ missions: [] })),
-        fetch("/api/datasets").then((r) => r.ok ? r.json() : []).catch(() => []),
-        fetch("/api/models").then((r) => r.ok ? r.json() : []).catch(() => []),
-        fetch("/api/packages").then((r) => r.ok ? r.json() : []).catch(() => []),
-      ]);
+      const opts = await fetch("/api/flow-options").then((r) => r.ok ? r.json() : {}).catch(() => ({}));
       if (gen !== formGen) return;
+      const inboxList = opts.inbox || [];
       const inboxSel = document.getElementById("act-inbox");
       if (inboxSel) {
-        const list = inbox.missions || [];
         inboxSel.innerHTML = optList(
-          list,
+          inboxList,
           "mission_id",
           (it) => it.mission_id + "（" + (it.files || 0) + " ファイル）",
-          list.length ? "選んでください" : "inbox は空です。data\\inbox にコピーしてください"
+          inboxList.length ? "選んでください" : "inbox は空です。data\\inbox にコピーしてください"
         );
       }
       const missionSel = document.getElementById("act-mission");
       if (missionSel) {
-        const list = missions.missions || [];
+        const list = opts.missions || [];
         missionSel.innerHTML = optList(
           list,
-          "id",
-          (it) => (it.id || it.mission_id) + (it.parsed_exists ? " / parsed" : ""),
+          "mission_id",
+          (it) => it.mission_id + " / 画像 " + (it.cameras || 0) + " / ラベル " + (it.labeled || 0),
           list.length ? "選んでください" : "先に取込を実行してください"
         );
       }
       const dsSel = document.getElementById("act-ds");
       if (dsSel) {
-        const list = Array.isArray(datasets) ? datasets.filter((it) => it.dataset_version_id) : [];
+        const list = opts.datasets || [];
         dsSel.innerHTML = optList(
           list,
           "dataset_version_id",
-          (it) => (it.name || it.dataset_id) + " v" + it.version + " / " + it.dataset_version_id,
+          (it) => (it.name || it.dataset_id) + " v" + it.version + " / " + (it.task || "") + " / " + it.dataset_version_id,
           list.length ? "選んでください" : "先にデータセットを生成してください"
         );
       }
       const runSel = document.getElementById("act-run");
       if (runSel) {
-        const runs = (dash.recent && dash.recent.runs) || [];
+        const runs = opts.runs || [];
         runSel.innerHTML = optList(
           runs,
           "run_id",
@@ -1405,23 +1774,93 @@
       }
       const modelSel = document.getElementById("act-model");
       if (modelSel) {
-        const list = models || [];
+        const list = (opts.models || []).filter((m) => PACKABLE[m.status]);
         modelSel.innerHTML = optList(
           list,
           "model_id",
           (it) => (it.name || "") + " " + (it.version || "") + " / " + (it.status || "") + " / " + it.model_id,
-          list.length ? "選んでください" : "先にゲートを通してください"
+          list.length ? "選んでください" : "ゲートに合格したモデルがありません"
         );
       }
       const pkgSel = document.getElementById("act-pkg");
       if (pkgSel) {
-        const list = packages || [];
+        const list = opts.packages || [];
         pkgSel.innerHTML = optList(
           list,
           "package_id",
           (it) => it.package_id + " / " + (it.target_stage || ""),
           list.length ? "選んでください" : "先にパッケージを作ってください"
         );
+      }
+      const taskSel = document.getElementById("act-task");
+      if (taskSel && opts.suggested_task) {
+        taskSel.value = opts.suggested_task;
+        const meta = TASK_META[opts.suggested_task];
+        if (meta) {
+          applyPrefill("act-dsid", meta.id);
+          applyPrefill("act-name", meta.name);
+        }
+        taskSel.onchange = () => {
+          const m = TASK_META[taskSel.value];
+          if (!m) return;
+          applyPrefill("act-dsid", m.id);
+          applyPrefill("act-name", m.name);
+        };
+      }
+      applyPrefill("act-inbox", lastResult.mission_id);
+      applyPrefill("act-mid", lastResult.mission_id);
+      applyPrefill("act-mission", lastResult.mission_id);
+      const toolSel = document.getElementById("act-tool");
+      const kindSel = document.getElementById("act-kind");
+      const jsonlIn = document.getElementById("act-jsonl");
+      const help = document.getElementById("act-tool-help");
+      function syncAnnotateTool() {
+        if (!toolSel) return;
+        const meta = ANNOTATE_TOOL_META[toolSel.value] || ANNOTATE_TOOL_META.labelstudio;
+        if (kindSel && (kindSel.value === "auto" || !kindSel.value)) kindSel.value = "auto";
+        go.textContent = meta.go;
+        const mid = (document.getElementById("act-mission") || {}).value || lastResult.mission_id || "M-AVBAG-001";
+        if (jsonlIn && !jsonlIn.dataset.touched) jsonlIn.value = "data/annotate/" + mid + "/export.jsonl";
+        if (help) {
+          if (toolSel.value === "salt") help.textContent = "点群を data\\\\annotate\\\\" + mid + "\\\\lidar に出します。WSL の SALT GUI で塗って export.jsonl を戻してください。";
+          else if (toolSel.value === "xtreme1") help.textContent = "画像と点群（.pcd）を出して Xtreme1 http://127.0.0.1:8190 を開きます。";
+          else help.textContent = "カメラを Label Studio http://127.0.0.1:8081 に投入します。";
+        }
+      }
+      if (toolSel) {
+        if (lastResult.tool && ANNOTATE_TOOL_META[lastResult.tool]) toolSel.value = lastResult.tool;
+        toolSel.onchange = syncAnnotateTool;
+        syncAnnotateTool();
+      }
+      if (jsonlIn) jsonlIn.oninput = () => { jsonlIn.dataset.touched = "1"; };
+      const importBtn = document.getElementById("act-import");
+      if (importBtn) {
+        importBtn.onclick = async () => {
+          const path = (jsonlIn && jsonlIn.value.trim()) || "";
+          if (!path) {
+            document.getElementById("hint").textContent = "jsonl のパスを入れてください";
+            return;
+          }
+          const idle = importBtn.textContent;
+          const tool = (toolSel && toolSel.value) || "salt";
+          try {
+            await runCatalog("/annotate/import-jsonl", { path: path, tool: tool === "labelstudio" ? "salt" : tool }, "結果取込", importBtn, idle, 60, "annotate");
+          } catch (_) {}
+        };
+      }
+      applyPrefill("act-ds", lastResult.dataset_version_id);
+      applyPrefill("act-run", lastResult.run_id);
+      applyPrefill("act-model", lastResult.model_id);
+      applyPrefill("act-pkg", lastResult.package_id);
+
+      const nextBtn = document.getElementById("act-next");
+      if (nextBtn) {
+        nextBtn.onclick = () => {
+          if (s.id === "collect") selected = "ingest";
+          else if (s.id === "annotate") selected = "dataset";
+          view = "flow";
+          render();
+        };
       }
 
       go.onclick = async () => {
@@ -1438,13 +1877,22 @@
             const typed = (document.getElementById("act-mid").value || "").trim();
             const folder = typed || document.getElementById("act-inbox").value;
             if (!folder) throw new Error("inbox のフォルダを選ぶか、名前を入力してください");
-            await runCatalog("/ingest", { path: "/data/inbox/" + folder, source_type: document.getElementById("act-source").value }, "取込", go, idle);
+            lastResult.mission_id = folder;
+            await runCatalog("/ingest", { path: "/data/inbox/" + folder, source_type: document.getElementById("act-source").value }, "取込", go, idle, 90, "ingest");
             return;
           }
           if (s.id === "annotate") {
             const missionId = document.getElementById("act-mission").value;
             if (!missionId) throw new Error("ミッションを選んでください");
-            await runCatalog("/annotate/init", { mission_id: missionId, kind: document.getElementById("act-kind").value }, "アノテ投入", go, idle);
+            lastResult.mission_id = missionId;
+            const tool = document.getElementById("act-tool").value;
+            await runCatalog("/annotate/init", {
+              mission_id: missionId,
+              kind: document.getElementById("act-kind").value,
+              tool: tool,
+            }, "アノテ投入", go, idle, 90, "annotate");
+            const meta = ANNOTATE_TOOL_META[tool];
+            if (meta && meta.url) window.open(meta.url, "_blank", "noopener");
             return;
           }
           if (s.id === "dataset") {
@@ -1454,26 +1902,26 @@
               dataset_id: datasetId,
               name: document.getElementById("act-name").value.trim() || datasetId,
               task: document.getElementById("act-task").value,
-            }, "データセット生成", go, idle);
+            }, "データセット生成", go, idle, 90, "dataset");
             return;
           }
           if (s.id === "train") {
             const ds = document.getElementById("act-ds").value;
             if (!ds) throw new Error("データセット版を選んでください");
-            await runCatalog("/train", { dataset_version_id: ds, stage: document.getElementById("act-stage").value }, "学習", go, idle, 180);
+            await runCatalog("/train", { dataset_version_id: ds, stage: document.getElementById("act-stage").value }, "学習", go, idle, 180, "train");
             return;
           }
           if (s.id === "gate") {
             const runId = document.getElementById("act-run").value;
             if (!runId) throw new Error("学習 run を選んでください");
             const gateName = document.getElementById("act-gate").value;
-            await runCatalog("/gate", { run_id: runId, gate_name: gateName, target_status: gateName, mission_mode: "training" }, "ゲート", go, idle);
+            await runCatalog("/gate", { run_id: runId, gate_name: gateName, target_status: gateName, mission_mode: "training" }, "ゲート", go, idle, 90, "gate");
             return;
           }
           if (s.id === "package") {
             const modelId = document.getElementById("act-model").value;
             if (!modelId) throw new Error("モデルを選んでください");
-            await runCatalog("/packages", { model_id: modelId, target_stage: document.getElementById("act-stage").value }, "パッケージ", go, idle);
+            await runCatalog("/packages", { model_id: modelId, target_stage: document.getElementById("act-stage").value }, "パッケージ", go, idle, 90, "package");
             return;
           }
           if (s.id === "sync") {
@@ -1484,15 +1932,18 @@
             go.disabled = true;
             go.textContent = "実行中…";
             const started = await postJson("/sync", { package_id: pkg, vehicle_id: vid });
+            rememberResult(started);
             const tx = started.tx_id;
             document.getElementById("job").textContent = "同期 " + tx + " を送信中…";
+            let last = started;
             for (let i = 0; i < 200; i++) {
-              const step = await postJson("/sync/" + encodeURIComponent(tx) + "/chunk", {});
-              document.getElementById("job").textContent = "同期 " + tx + ": " + step.status + " " + (step.bytes_sent || 0) + "/" + (step.size_bytes || 0);
+              last = await postJson("/sync/" + encodeURIComponent(tx) + "/chunk", {});
+              document.getElementById("job").textContent = "同期 " + tx + ": " + last.status + " " + (last.bytes_sent || 0) + "/" + (last.size_bytes || 0);
               document.getElementById("hint").textContent = document.getElementById("job").textContent;
-              if (step.done) break;
+              if (last.done) break;
             }
-            await load();
+            rememberResult(last);
+            await finishStep("sync", { status: last.done ? "completed" : "running", result_json: last });
           }
         } catch (e) {
           document.getElementById("hint").textContent = e.message;
@@ -1566,6 +2017,7 @@
     }
 
     document.getElementById("tab-dash").onclick = () => { view = "dash"; render(); };
+    document.getElementById("tab-data").onclick = () => { view = "data"; render(); };
     document.getElementById("tab-flow").onclick = () => { view = "flow"; render(); };
     document.getElementById("tab-iss").onclick = () => { view = "issues"; render(); };
     document.getElementById("iss-form").onsubmit = async (ev) => {
@@ -1618,6 +2070,8 @@
       runJobDemo("/api/demo-e2e", document.getElementById("demo-e2e"), "E2Eデモ", 40);
     document.getElementById("demo-yolox").onclick = () =>
       runJobDemo("/api/demo-yolox", document.getElementById("demo-yolox"), "YOLOXデモ", 240);
+    document.getElementById("demo-rosbag").onclick = () =>
+      runJobDemo("/api/demo-rosbag", document.getElementById("demo-rosbag"), "rosbag2デモ", 300);
     document.getElementById("refresh").onclick = load;
     load().catch((e) => {
       document.getElementById("hint").textContent =

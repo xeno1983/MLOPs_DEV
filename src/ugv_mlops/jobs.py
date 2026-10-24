@@ -49,6 +49,8 @@ def run_once() -> dict | None:
         job_id = row["job_id"]
         kind = row["kind"]
         payload = row["payload_json"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
 
     try:
         result = _dispatch(kind, payload)
@@ -93,6 +95,7 @@ def _dispatch(kind: str, payload: dict) -> dict:
             payload["dataset_id"],
             payload.get("name") or payload["dataset_id"],
             payload.get("task", "obstacle_cls"),
+            mission_id=payload.get("mission_id"),
         )
     if kind == "train":
         from ugv_mlops.train import train_from_dataset
@@ -123,6 +126,10 @@ def _dispatch(kind: str, payload: dict) -> dict:
         from ugv_mlops.demo import run_yolox_demo
 
         return run_yolox_demo()
+    if kind == "demo_rosbag":
+        from ugv_mlops.demo import run_av_rosbag_demo
+
+        return run_av_rosbag_demo()
     if kind == "dvc_publish":
         from ugv_mlops.dvc_sync import publish_dataset, publish_mission
 
@@ -148,11 +155,20 @@ def _dispatch(kind: str, payload: dict) -> dict:
     if kind == "annotate_init":
         from ugv_mlops.annotate_io import init_session
 
-        return init_session(payload["mission_id"], payload.get("kind", "camera"), payload.get("limit", 200))
+        return init_session(
+            payload["mission_id"],
+            payload.get("kind", "auto"),
+            payload.get("limit", 200),
+            payload.get("tool", "labelstudio"),
+        )
     if kind == "annotate_import_masks":
         from ugv_mlops.annotate_io import import_masks
 
         return import_masks(payload["session"], payload.get("masks_dir") or "", payload.get("tool", "sam-freespace"))
+    if kind == "annotate_import_jsonl":
+        from ugv_mlops.annotate_io import import_jsonl
+
+        return import_jsonl(payload["path"], payload.get("tool", "salt"))
     raise ValueError(f"unknown job kind: {kind}")
 
 

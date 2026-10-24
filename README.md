@@ -69,12 +69,13 @@ docker compose up -d
 
 各ツールの初期 ID / パスワードは [docs/usage.md](docs/usage.md#画面の場所と初期-id--パスワード) です。
 
-デモ（知覚分類 / E2E / YOLOX）:
+デモ（知覚分類 / E2E / YOLOX / 公開 rosbag2）:
 
 ```powershell
 Invoke-RestMethod -Method POST http://localhost:8000/demo
 Invoke-RestMethod -Method POST http://localhost:8000/demo-e2e
 Invoke-RestMethod -Method POST http://localhost:8000/demo-yolox
+Invoke-RestMethod -Method POST http://localhost:8000/demo-rosbag
 Invoke-RestMethod http://localhost:8000/status
 ```
 

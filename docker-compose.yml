@@ -244,6 +244,7 @@ services:
       - ./src:/app/src:ro
       - ./:/app/repo
       - ./data/annotate:/data/annotate
+      - ./data/cache:/data/cache
       - ${AUTOWARE_E2E_ROOT:-./data/autoware_stub}:/autoware_e2e:ro
     ports:
       - "8000:8000"
