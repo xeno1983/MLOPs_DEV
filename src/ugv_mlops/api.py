@@ -257,7 +257,7 @@ def pipeline() -> dict:
             "tool": "Catalog / Garage raw",
             "count": samples,
             "unit": "サンプル",
-            "how": "POST /ingest（取込→追跡→パース→保管）。bag なら cameras/、lidar/*.bin、localization、cmd_vel を Garage と DVC へ。段階だけなら /missions。",
+            "how": "下のボタンで取込（追跡・パース・保管まで一括）。bag なら cameras/、lidar/*.bin、localization、cmd_vel を Garage と DVC へ。",
         },
         {
             "id": "annotate",
@@ -266,7 +266,7 @@ def pipeline() -> dict:
             "tool": "Label Studio",
             "count": labeled,
             "unit": "ラベル済み",
-            "how": "必須。クラス/bbox は Label Studio。Freespace は SAM、点群は SALT、確認は Xtreme1。E2E だけ cmd_vel が教師。",
+            "how": "必須。下のボタンで Label Studio に投入し、関連ツールを開いてラベルする。Freespace は SAM、点群は SALT、確認は Xtreme1。E2E だけ cmd_vel が教師。",
         },
         {
             "id": "dataset",
@@ -275,7 +275,7 @@ def pipeline() -> dict:
             "tool": "Garage datasets",
             "count": datasets,
             "unit": "版",
-            "how": "POST /datasets/build。知覚は task=obstacle_cls、検出は task=detection（YOLOX）、E2E は task=e2e。",
+            "how": "下のボタンで版を切る。知覚は obstacle_cls、検出は detection（YOLOX）、E2E は e2e。",
         },
         {
             "id": "train",
@@ -284,7 +284,7 @@ def pipeline() -> dict:
             "tool": "MLflow",
             "count": runs,
             "unit": "実験",
-            "how": "POST /train。分類は精度、検出は YOLOX の mAP@0.5、E2E は steer/speed の MAE。",
+            "how": "下のボタンで学習。分類は精度、検出は YOLOX の mAP@0.5、E2E は steer/speed の MAE。指標は MLflow。",
         },
         {
             "id": "gate",
@@ -293,7 +293,7 @@ def pipeline() -> dict:
             "tool": "ゲート + 署名",
             "count": passed,
             "unit": "合格モデル",
-            "how": "POST /gate。分類は精度・FPR、検出は map50、E2E は MAE。通ったものだけ署名される。",
+            "how": "下のボタンでゲート判定。分類は精度・FPR、検出は map50、E2E は MAE。通ったものだけ署名される。",
         },
         {
             "id": "package",
@@ -302,7 +302,7 @@ def pipeline() -> dict:
             "tool": "Garage packages",
             "count": packages,
             "unit": "パッケージ",
-            "how": "POST /packages。S1 は小さい成果物のみ。フル重みは S3/S4。",
+            "how": "下のボタンで車載パッケージを作る。S1 は小さい成果物のみ。フル重みは S3/S4。",
         },
         {
             "id": "sync",
@@ -311,7 +311,7 @@ def pipeline() -> dict:
             "tool": "チャンク配送",
             "count": acked,
             "unit": "配送完了",
-            "how": "POST /sync のあと、リンクが開いている間だけ chunk を送る。失敗時はロールバック。",
+            "how": "下のボタンで同期し、チャンク送信までこの画面で完了する。失敗時はロールバック。",
         },
     ]
     for step in steps:
@@ -753,6 +753,31 @@ def dvc_status() -> dict:
     return st
 
 
+@app.get("/inbox")
+def list_inbox() -> dict:
+    """ホストの data/inbox とコンテナの /data/inbox は同じ。ポータルの取込フォーム用。"""
+    root = settings.inbox_path
+    items = []
+    if root.exists():
+        for path in sorted(root.iterdir()):
+            if not path.is_dir():
+                continue
+            files = 0
+            for child in path.rglob("*"):
+                if child.is_file():
+                    files += 1
+                    if files >= 500:
+                        break
+            items.append(
+                {
+                    "mission_id": path.name,
+                    "path": f"/data/inbox/{path.name}",
+                    "files": files,
+                }
+            )
+    return {"root": "/data/inbox", "missions": items}
+
+
 @app.get("/missions")
 def missions() -> dict:
     from ugv_mlops.bag_pipeline import list_missions
@@ -865,6 +890,22 @@ def train(req: TrainReq) -> dict:
 def gate(req: GateReq) -> dict:
     JOBS_ENQUEUED.labels("gate").inc()
     return {"job_id": enqueue("gate", req.model_dump())}
+
+
+@app.get("/packages")
+def list_packages() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT package_id, model_id, target_stage, size_bytes, created_at
+                FROM update_package
+                ORDER BY created_at DESC
+                LIMIT 50
+                """
+            )
+        ).mappings().all()
+    return [dict(r) for r in rows]
 
 
 @app.post("/packages")

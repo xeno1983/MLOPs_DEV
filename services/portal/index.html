@@ -316,6 +316,9 @@
       font: inherit;
     }
     .form-grid textarea { min-height: 72px; resize: vertical; }
+    .detail .form-grid { margin-top: 12px; max-width: 560px; }
+    .detail .form-grid button { margin-top: 4px; justify-self: start; }
+    .detail a.ext { color: var(--acc2); }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .issue-item {
       padding: 10px 8px;
@@ -451,10 +454,10 @@
       <p style="color:var(--muted);font-size:13px;margin:0 0 8px;">起動しているだけでなく、Catalog とデータをやり取りしているかを示します。</p>
       <div class="integ" id="integ"></div>
       <section class="tools">
-        <a class="t" href="http://localhost:8000/docs" target="_blank" rel="noreferrer"><b>Catalog API</b><span>工程の実行（OpenAPI）</span></a>
-        <a class="t" href="http://localhost:5000" target="_blank" rel="noreferrer"><b>MLflow</b><span>学習指標・実験</span></a>
-        <a class="t" href="http://localhost:9000" target="_blank" rel="noreferrer"><b>Garage S3</b><span>bag・センサ・データセット（コンソールなし）</span></a>
-        <a class="t" href="http://localhost:8081" target="_blank" rel="noreferrer"><b>Label Studio</b><span>画像クラス / bbox（必須）</span></a>
+        <a class="t" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer"><b>Catalog API</b><span>上級者向けの仕様（この画面から実行できます）</span></a>
+        <a class="t" href="http://127.0.0.1:5000" target="_blank" rel="noreferrer"><b>MLflow</b><span>学習指標・実験</span></a>
+        <a class="t" href="http://127.0.0.1:9000" target="_blank" rel="noreferrer"><b>Garage S3</b><span>bag・センサ・データセット（コンソールなし）</span></a>
+        <a class="t" href="http://127.0.0.1:8081" target="_blank" rel="noreferrer"><b>Label Studio</b><span>画像クラス / bbox（必須）</span></a>
         <a class="t" href="http://127.0.0.1:8190" target="_blank" rel="noreferrer"><b>Xtreme1</b><span>カメラと点群の確認（Autoware compose）</span></a>
       </section>
       <p class="stamp">SALT は WSL GUI。DVC は ingest / データセット区切りで Garage へ。拡張は <code>--profile full</code>。</p>
@@ -528,13 +531,13 @@
   <script>
     const LINKS = {
       collect: null,
-      ingest: "http://localhost:8000/docs#/default/ingest_ingest_post",
-      annotate: "http://localhost:8081",
-      dataset: "http://localhost:8000/docs",
-      train: "http://localhost:5000",
-      gate: "http://localhost:8000/docs",
-      package: "http://localhost:9000",
-      sync: "http://localhost:8000/docs",
+      ingest: null,
+      annotate: "http://127.0.0.1:8081",
+      dataset: null,
+      train: "http://127.0.0.1:5000",
+      gate: null,
+      package: null,
+      sync: null,
     };
     const INTEG_NAMES = {
       catalog: "Catalog",
@@ -812,7 +815,7 @@
         (model ? "　最新モデル " + esc(model.status) : "") +
         "</p></div>" +
         '<div class="now-actions">' +
-        '<button type="button" id="dash-open-step">工程 ' + esc(next ? String(next.n) : "") + " を開く</button>" +
+        '<button type="button" id="dash-open-step">工程 ' + esc(next ? String(next.n) : "") + " を実行する</button>" +
         (openIssues > 0 ? '<button type="button" class="secondary" id="dash-open-iss">未解決課題 ' + openIssues + "</button>" : "") +
         "</div>";
       const openStep = document.getElementById("dash-open-step");
@@ -1167,6 +1170,340 @@
       };
     }
 
+    let formGen = 0;
+
+    async function postJson(path, body) {
+      const res = await fetch("/api" + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      const raw = await res.text();
+      let json = {};
+      try { json = raw ? JSON.parse(raw) : {}; } catch { json = { detail: raw }; }
+      if (!res.ok) {
+        const d = json.detail;
+        throw new Error(typeof d === "string" ? d : (raw || res.statusText));
+      }
+      return json;
+    }
+
+    async function waitJob(jobId, label, tries) {
+      const maxTries = tries || 90;
+      const jobEl = document.getElementById("job");
+      const hint = document.getElementById("hint");
+      for (let i = 0; i < maxTries; i++) {
+        await new Promise((x) => setTimeout(x, 2000));
+        const job = await fetch("/api/jobs/" + jobId).then((r) => r.json());
+        const line = label + ": " + job.status + " / " + jobId + (job.error ? " / " + job.error : "");
+        jobEl.textContent = line;
+        hint.textContent = line;
+        if (job.status === "completed" || job.status === "failed") {
+          await load();
+          return job;
+        }
+      }
+      jobEl.textContent = "まだ実行中です: " + jobId;
+      hint.textContent = jobEl.textContent;
+      return { status: "running", job_id: jobId };
+    }
+
+    async function runCatalog(path, body, label, btn, idleLabel, tries) {
+      if (btn) { btn.disabled = true; btn.textContent = "実行中…"; }
+      const jobEl = document.getElementById("job");
+      try {
+        jobEl.textContent = label + " を投入しています…";
+        const started = await postJson(path, body);
+        if (!started.job_id) {
+          jobEl.textContent = label + ": " + JSON.stringify(started);
+          document.getElementById("hint").textContent = jobEl.textContent;
+          await load();
+          return started;
+        }
+        return await waitJob(started.job_id, label, tries);
+      } catch (e) {
+        const msg = label + " に失敗しました: " + e.message;
+        jobEl.textContent = msg;
+        document.getElementById("hint").textContent = msg;
+        throw e;
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = idleLabel; }
+      }
+    }
+
+    function optList(items, valueKey, labelFn, empty) {
+      const rows = ['<option value="">' + esc(empty) + "</option>"];
+      (items || []).forEach((it) => {
+        const v = typeof it === "string" ? it : (it[valueKey] || it.id || it.mission_id);
+        if (!v) return;
+        rows.push('<option value="' + esc(String(v)) + '">' + esc(labelFn(it)) + "</option>");
+      });
+      return rows.join("");
+    }
+
+    function stepFormHtml(s) {
+      const link = LINKS[s.id];
+      const extra = link
+        ? '　<a class="ext" href="' + link + '" target="_blank" rel="noreferrer">関連ツールを開く</a>'
+        : "";
+      let form = "";
+      if (s.id === "collect") {
+        form =
+          '<div class="form-grid">' +
+          "<label>inbox のミッション（ホストの <code>data\\inbox\\&lt;mission_id&gt;</code>）</label>" +
+          '<select id="act-inbox"><option value="">読み込み中…</option></select>' +
+          "<p>bag や画像をそのフォルダにコピーしてから、次の工程「取込」を実行します。</p>" +
+          '<button type="button" id="act-go">フォルダを再読込</button>' +
+          "</div>";
+      } else if (s.id === "ingest") {
+        form =
+          '<div class="form-grid">' +
+          "<label>inbox のフォルダ</label>" +
+          '<select id="act-inbox"><option value="">読み込み中…</option></select>' +
+          "<label>フォルダ名を直接入力（任意）</label>" +
+          '<input id="act-mid" placeholder="例: M-001" />' +
+          "<label>種別</label>" +
+          '<select id="act-source">' +
+          '<option value="dropzone">dropzone（自動判定）</option>' +
+          '<option value="rosbag">rosbag</option>' +
+          '<option value="images">images</option>' +
+          "</select>" +
+          '<button type="button" id="act-go">取込を実行</button>' +
+          "</div>";
+      } else if (s.id === "annotate") {
+        form =
+          '<div class="form-grid">' +
+          "<label>ミッション</label>" +
+          '<select id="act-mission"><option value="">読み込み中…</option></select>' +
+          "<label>対象</label>" +
+          '<select id="act-kind">' +
+          '<option value="camera">camera</option>' +
+          '<option value="lidar">lidar</option>' +
+          "</select>" +
+          '<button type="button" id="act-go">Label Studio に投入</button>' +
+          "</div>";
+      } else if (s.id === "dataset") {
+        form =
+          '<div class="form-grid">' +
+          "<label>データセット ID</label>" +
+          '<input id="act-dsid" value="ds-obstacle-01" />' +
+          "<label>表示名</label>" +
+          '<input id="act-name" value="obstacle v1" />' +
+          "<label>タスク</label>" +
+          '<select id="act-task">' +
+          '<option value="obstacle_cls">obstacle_cls（知覚）</option>' +
+          '<option value="e2e">e2e</option>' +
+          '<option value="detection">detection</option>' +
+          "</select>" +
+          '<button type="button" id="act-go">データセットを生成</button>' +
+          "</div>";
+      } else if (s.id === "train") {
+        form =
+          '<div class="form-grid">' +
+          "<label>データセット版</label>" +
+          '<select id="act-ds"><option value="">読み込み中…</option></select>' +
+          "<label>学習段</label>" +
+          '<select id="act-stage">' +
+          '<option value="S3">S3（前線）</option>' +
+          '<option value="S4">S4（後方）</option>' +
+          "</select>" +
+          '<button type="button" id="act-go">学習を実行</button>' +
+          "</div>";
+      } else if (s.id === "gate") {
+        form =
+          '<div class="form-grid">' +
+          "<label>学習 run</label>" +
+          '<select id="act-run"><option value="">読み込み中…</option></select>' +
+          "<label>ゲート</label>" +
+          '<select id="act-gate">' +
+          '<option value="staging">staging</option>' +
+          '<option value="production">production</option>' +
+          "</select>" +
+          '<button type="button" id="act-go">ゲートを実行</button>' +
+          "</div>";
+      } else if (s.id === "package") {
+        form =
+          '<div class="form-grid">' +
+          "<label>モデル</label>" +
+          '<select id="act-model"><option value="">読み込み中…</option></select>' +
+          "<label>対象段階</label>" +
+          '<select id="act-stage">' +
+          '<option value="S3">S3</option>' +
+          '<option value="S1">S1（車載）</option>' +
+          '<option value="S4">S4</option>' +
+          "</select>" +
+          '<button type="button" id="act-go">パッケージを作る</button>' +
+          "</div>";
+      } else if (s.id === "sync") {
+        form =
+          '<div class="form-grid">' +
+          "<label>パッケージ</label>" +
+          '<select id="act-pkg"><option value="">読み込み中…</option></select>' +
+          "<label>車両 ID</label>" +
+          '<input id="act-vid" value="UGV-01" />' +
+          '<button type="button" id="act-go">同期を実行</button>' +
+          "</div>";
+      }
+      return (
+        "<h3>工程 " + s.n + " — " + s.title + "</h3>" +
+        "<p>" + s.how + "</p>" +
+        "<p>使うもの: <code>" + s.tool + "</code>" + extra + "</p>" +
+        form
+      );
+    }
+
+    async function bindStepForm(s, gen) {
+      const go = document.getElementById("act-go");
+      if (!go) return;
+      const [inbox, missions, datasets, models, packages] = await Promise.all([
+        fetch("/api/inbox").then((r) => r.ok ? r.json() : { missions: [] }).catch(() => ({ missions: [] })),
+        fetch("/api/missions").then((r) => r.ok ? r.json() : { missions: [] }).catch(() => ({ missions: [] })),
+        fetch("/api/datasets").then((r) => r.ok ? r.json() : []).catch(() => []),
+        fetch("/api/models").then((r) => r.ok ? r.json() : []).catch(() => []),
+        fetch("/api/packages").then((r) => r.ok ? r.json() : []).catch(() => []),
+      ]);
+      if (gen !== formGen) return;
+      const inboxSel = document.getElementById("act-inbox");
+      if (inboxSel) {
+        const list = inbox.missions || [];
+        inboxSel.innerHTML = optList(
+          list,
+          "mission_id",
+          (it) => it.mission_id + "（" + (it.files || 0) + " ファイル）",
+          list.length ? "選んでください" : "inbox は空です。data\\inbox にコピーしてください"
+        );
+      }
+      const missionSel = document.getElementById("act-mission");
+      if (missionSel) {
+        const list = missions.missions || [];
+        missionSel.innerHTML = optList(
+          list,
+          "id",
+          (it) => (it.id || it.mission_id) + (it.parsed_exists ? " / parsed" : ""),
+          list.length ? "選んでください" : "先に取込を実行してください"
+        );
+      }
+      const dsSel = document.getElementById("act-ds");
+      if (dsSel) {
+        const list = Array.isArray(datasets) ? datasets.filter((it) => it.dataset_version_id) : [];
+        dsSel.innerHTML = optList(
+          list,
+          "dataset_version_id",
+          (it) => (it.name || it.dataset_id) + " v" + it.version + " / " + it.dataset_version_id,
+          list.length ? "選んでください" : "先にデータセットを生成してください"
+        );
+      }
+      const runSel = document.getElementById("act-run");
+      if (runSel) {
+        const runs = (dash.recent && dash.recent.runs) || [];
+        runSel.innerHTML = optList(
+          runs,
+          "run_id",
+          (it) => it.run_id + " / " + it.task + " / " + it.status,
+          runs.length ? "選んでください" : "先に学習を実行してください"
+        );
+      }
+      const modelSel = document.getElementById("act-model");
+      if (modelSel) {
+        const list = models || [];
+        modelSel.innerHTML = optList(
+          list,
+          "model_id",
+          (it) => (it.name || "") + " " + (it.version || "") + " / " + (it.status || "") + " / " + it.model_id,
+          list.length ? "選んでください" : "先にゲートを通してください"
+        );
+      }
+      const pkgSel = document.getElementById("act-pkg");
+      if (pkgSel) {
+        const list = packages || [];
+        pkgSel.innerHTML = optList(
+          list,
+          "package_id",
+          (it) => it.package_id + " / " + (it.target_stage || ""),
+          list.length ? "選んでください" : "先にパッケージを作ってください"
+        );
+      }
+
+      go.onclick = async () => {
+        const idle = go.textContent;
+        try {
+          if (s.id === "collect") {
+            await load();
+            selected = "collect";
+            view = "flow";
+            render();
+            return;
+          }
+          if (s.id === "ingest") {
+            const typed = (document.getElementById("act-mid").value || "").trim();
+            const folder = typed || document.getElementById("act-inbox").value;
+            if (!folder) throw new Error("inbox のフォルダを選ぶか、名前を入力してください");
+            await runCatalog("/ingest", { path: "/data/inbox/" + folder, source_type: document.getElementById("act-source").value }, "取込", go, idle);
+            return;
+          }
+          if (s.id === "annotate") {
+            const missionId = document.getElementById("act-mission").value;
+            if (!missionId) throw new Error("ミッションを選んでください");
+            await runCatalog("/annotate/init", { mission_id: missionId, kind: document.getElementById("act-kind").value }, "アノテ投入", go, idle);
+            return;
+          }
+          if (s.id === "dataset") {
+            const datasetId = document.getElementById("act-dsid").value.trim();
+            if (!datasetId) throw new Error("データセット ID を入れてください");
+            await runCatalog("/datasets/build", {
+              dataset_id: datasetId,
+              name: document.getElementById("act-name").value.trim() || datasetId,
+              task: document.getElementById("act-task").value,
+            }, "データセット生成", go, idle);
+            return;
+          }
+          if (s.id === "train") {
+            const ds = document.getElementById("act-ds").value;
+            if (!ds) throw new Error("データセット版を選んでください");
+            await runCatalog("/train", { dataset_version_id: ds, stage: document.getElementById("act-stage").value }, "学習", go, idle, 180);
+            return;
+          }
+          if (s.id === "gate") {
+            const runId = document.getElementById("act-run").value;
+            if (!runId) throw new Error("学習 run を選んでください");
+            const gateName = document.getElementById("act-gate").value;
+            await runCatalog("/gate", { run_id: runId, gate_name: gateName, target_status: gateName, mission_mode: "training" }, "ゲート", go, idle);
+            return;
+          }
+          if (s.id === "package") {
+            const modelId = document.getElementById("act-model").value;
+            if (!modelId) throw new Error("モデルを選んでください");
+            await runCatalog("/packages", { model_id: modelId, target_stage: document.getElementById("act-stage").value }, "パッケージ", go, idle);
+            return;
+          }
+          if (s.id === "sync") {
+            const pkg = document.getElementById("act-pkg").value;
+            const vid = document.getElementById("act-vid").value.trim();
+            if (!pkg) throw new Error("パッケージを選んでください");
+            if (!vid) throw new Error("車両 ID を入れてください");
+            go.disabled = true;
+            go.textContent = "実行中…";
+            const started = await postJson("/sync", { package_id: pkg, vehicle_id: vid });
+            const tx = started.tx_id;
+            document.getElementById("job").textContent = "同期 " + tx + " を送信中…";
+            for (let i = 0; i < 200; i++) {
+              const step = await postJson("/sync/" + encodeURIComponent(tx) + "/chunk", {});
+              document.getElementById("job").textContent = "同期 " + tx + ": " + step.status + " " + (step.bytes_sent || 0) + "/" + (step.size_bytes || 0);
+              document.getElementById("hint").textContent = document.getElementById("job").textContent;
+              if (step.done) break;
+            }
+            await load();
+          }
+        } catch (e) {
+          document.getElementById("hint").textContent = e.message;
+          document.getElementById("job").textContent = e.message;
+        } finally {
+          go.disabled = false;
+          go.textContent = idle;
+        }
+      };
+    }
+
     function renderFlow() {
       const flow = document.getElementById("flow");
       flow.innerHTML = "";
@@ -1183,13 +1520,9 @@
         flow.appendChild(el);
       });
       const s = data.steps.find((x) => x.id === selected) || data.steps[0];
-      const link = LINKS[s.id];
-      document.getElementById("detail").innerHTML =
-        "<h3>工程 " + s.n + " — " + s.title + "</h3>" +
-        "<p>" + s.how + "</p>" +
-        "<p>使うもの: <code>" + s.tool + "</code>" +
-        (link ? '　<a href="' + link + '" target="_blank" rel="noreferrer">開く</a>' : "") +
-        "</p>";
+      document.getElementById("detail").innerHTML = stepFormHtml(s);
+      const gen = ++formGen;
+      bindStepForm(s, gen);
       const job = data.latest_job;
       document.getElementById("job").textContent = job
         ? ("最新ジョブ: " + job.kind + " / " + job.status + " / " + job.job_id)
