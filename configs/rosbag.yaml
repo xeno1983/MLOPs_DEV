@@ -1,0 +1,11 @@
+# ROS2 bag / Autoware 系トピックの役割。空の topics は自動判定。
+
+frame_stride: 5
+max_frames_per_topic: 400
+lidar_stride: 20
+max_lidar_keyframes: 80
+action_max_dt_sec: 0.25
+e2e_history: 4
+
+# 明示指定する場合（カンマ区切り環境変数 ROSBAG_TOPICS でも上書き可）
+image_topics: []

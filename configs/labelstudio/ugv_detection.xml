@@ -1,0 +1,11 @@
+<View>
+  <Header value="UGV 前方カメラ — 物体検出"/>
+  <Image name="image" value="$image"/>
+  <RectangleLabels name="label" toName="image">
+    <Label value="person" background="#e53935"/>
+    <Label value="vehicle" background="#1e88e5"/>
+    <Label value="obstacle" background="#fb8c00"/>
+    <Label value="animal" background="#8e24aa"/>
+    <Label value="unknown" background="#546e7a"/>
+  </RectangleLabels>
+</View>
