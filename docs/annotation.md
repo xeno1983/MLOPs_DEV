@@ -1,6 +1,6 @@
 # アノテーション（必須）
 
-帰還 bag を ingest しただけでは教師がありません。四脚シミュとはここが違います。ツールは用途で分けます（`C:\Users\xeno1\Autoware_e2e\docs\reference\AUTO_ANNOTATION.md` と同じ分担）。
+帰還 bag を ingest しただけでは教師がありません。四脚シミュとはここが違います。ツールは用途で分けます（`C:\Users\xeno1\Autoware_e2e\docs\reference\AUTO_ANNOTATION.md` と同じ分担）。ポータル工程3で **Label Studio / SALT / Xtreme1** を選んで作業データを出せます。
 
 | 何を付けるか | ツール | 場所 |
 |--------------|--------|------|
@@ -50,12 +50,13 @@ python -m ugv_mlops.cli annotate-import-masks M-20260831-001
 
 ## 3. LiDAR（SALT）
 
-1. `C:\Users\xeno1\Autoware_e2e\docs\reference\SALT_SETUP_WSL.md` で GUI を起動する。
-2. シーケンスを読み **SALT** で事前分割し、クラス色で塗る。
-3. 書き出した jsonl（各行 `sample_id` + `label_json`）を:
+1. ポータル工程3でツール **SALT**、ミッションを選び「SALT 用に点群を出す」。
+2. `C:\Users\xeno1\Autoware_e2e\docs\reference\SALT_SETUP_WSL.md` で GUI を起動する。
+3. `data/annotate/<mission_id>/lidar` の `.pcd` / `.bin` を読み、クラス色で塗る。
+4. 書き出した jsonl（各行 `sample_id` + `label_json`）を `data/annotate/<mission_id>/export.jsonl` に置き、工程3の「結果を Catalog に戻す」。
 
 ```powershell
-python -m ugv_mlops.cli annotate-import-jsonl path\to\salt.jsonl --tool salt
+python -m ugv_mlops.cli annotate-import-jsonl data/annotate/M-AVBAG-001/export.jsonl --tool salt
 ```
 
 点群原本は bag（Garage `raw`）。ingest の lidar はキーフレームメタです。
@@ -63,6 +64,8 @@ python -m ugv_mlops.cli annotate-import-jsonl path\to\salt.jsonl --tool salt
 ---
 
 ## 4. 確認（Xtreme1）
+
+ポータル工程3でツール **Xtreme1** を選ぶと、画像と点群を `data/annotate/<mission_id>/` に出し、http://127.0.0.1:8190 を開きます。
 
 Autoware_e2e で:
 

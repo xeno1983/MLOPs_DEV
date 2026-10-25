@@ -203,13 +203,15 @@ function Show-Status {
 function Run-Demo {
     Write-Host ""
     Write-Host "  1  知覚分類デモ"
-    Write-Host "  2  E2E デモ"
+    Write-Host "  2  E2E デモ（合成）"
     Write-Host "  3  YOLOX デモ（初回は数分）"
+    Write-Host "  4  rosbag2 デモ（CostNav 公開 bag、初回は取得あり）"
     $pick = Read-Host "番号 [1]"
     if ([string]::IsNullOrWhiteSpace($pick)) { $pick = "1" }
     $path = switch ($pick) {
         "2" { "/demo-e2e" }
         "3" { "/demo-yolox" }
+        "4" { "/demo-rosbag" }
         default { "/demo" }
     }
     try {

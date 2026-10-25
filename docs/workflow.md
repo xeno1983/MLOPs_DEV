@@ -169,7 +169,7 @@ Invoke-RestMethod -Method POST http://localhost:8000/sync `
 
 Garage `packages` が倉庫、`/sync` のチャンクが配達。失敗時はロールバック。OS イメージ更新とは分け、モデル zip だけを送る（四脚が rootfs と `pai-model` を分けたのと同じ）。
 
-一気通貫の煙試験は `POST /demo` / `/demo-e2e` / `/demo-yolox`。
+一気通貫の煙試験は `POST /demo` / `/demo-e2e` / `/demo-yolox` / `/demo-rosbag`。
 
 ---
 

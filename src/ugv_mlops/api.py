@@ -50,6 +50,7 @@ class DatasetReq(BaseModel):
     dataset_id: str
     name: str | None = None
     task: str = "obstacle_cls"
+    mission_id: str | None = None
 
 
 class TrainReq(BaseModel):
@@ -88,14 +89,20 @@ class MissionImportReq(BaseModel):
 
 class AnnotateInitReq(BaseModel):
     mission_id: str
-    kind: str = "camera"
+    kind: str = "auto"
     limit: int = 200
+    tool: str = "labelstudio"
 
 
 class AnnotateImportReq(BaseModel):
     session: str
     masks_dir: str = ""
     tool: str = "sam-freespace"
+
+
+class AnnotateJsonlReq(BaseModel):
+    path: str
+    tool: str = "salt"
 
 
 class IssueCreateReq(BaseModel):
@@ -257,16 +264,16 @@ def pipeline() -> dict:
             "tool": "Catalog / Garage raw",
             "count": samples,
             "unit": "サンプル",
-            "how": "POST /ingest（取込→追跡→パース→保管）。bag なら cameras/、lidar/*.bin、localization、cmd_vel を Garage と DVC へ。段階だけなら /missions。",
+            "how": "下のボタンで取込（追跡・パース・保管まで一括）。bag なら cameras/、lidar/*.bin、localization、cmd_vel を Garage と DVC へ。",
         },
         {
             "id": "annotate",
             "n": 3,
             "title": "ラベルを付ける",
-            "tool": "Label Studio",
+            "tool": "Label Studio / SALT / Xtreme1",
             "count": labeled,
             "unit": "ラベル済み",
-            "how": "必須。クラス/bbox は Label Studio。Freespace は SAM、点群は SALT、確認は Xtreme1。E2E だけ cmd_vel が教師。",
+            "how": "ツールを選んで作業データを出す。画像クラスは Label Studio、点群は SALT、カメラと点群の確認は Xtreme1。E2E（cmd_vel 教師）はスキップ可。",
         },
         {
             "id": "dataset",
@@ -275,7 +282,7 @@ def pipeline() -> dict:
             "tool": "Garage datasets",
             "count": datasets,
             "unit": "版",
-            "how": "POST /datasets/build。知覚は task=obstacle_cls、検出は task=detection（YOLOX）、E2E は task=e2e。",
+            "how": "下のボタンで版を切る。知覚は obstacle_cls、検出は detection（YOLOX）、E2E は e2e。",
         },
         {
             "id": "train",
@@ -284,7 +291,7 @@ def pipeline() -> dict:
             "tool": "MLflow",
             "count": runs,
             "unit": "実験",
-            "how": "POST /train。分類は精度、検出は YOLOX の mAP@0.5、E2E は steer/speed の MAE。",
+            "how": "下のボタンで学習。分類は精度、検出は YOLOX の mAP@0.5、E2E は steer/speed の MAE。指標は MLflow。",
         },
         {
             "id": "gate",
@@ -293,7 +300,7 @@ def pipeline() -> dict:
             "tool": "ゲート + 署名",
             "count": passed,
             "unit": "合格モデル",
-            "how": "POST /gate。分類は精度・FPR、検出は map50、E2E は MAE。通ったものだけ署名される。",
+            "how": "下のボタンでゲート判定。分類は精度・FPR、検出は map50、E2E は MAE。通ったものだけ署名される。",
         },
         {
             "id": "package",
@@ -302,7 +309,7 @@ def pipeline() -> dict:
             "tool": "Garage packages",
             "count": packages,
             "unit": "パッケージ",
-            "how": "POST /packages。S1 は小さい成果物のみ。フル重みは S3/S4。",
+            "how": "下のボタンで車載パッケージを作る。S1 は小さい成果物のみ。フル重みは S3/S4。",
         },
         {
             "id": "sync",
@@ -311,7 +318,7 @@ def pipeline() -> dict:
             "tool": "チャンク配送",
             "count": acked,
             "unit": "配送完了",
-            "how": "POST /sync のあと、リンクが開いている間だけ chunk を送る。失敗時はロールバック。",
+            "how": "下のボタンで同期し、チャンク送信までこの画面で完了する。失敗時はロールバック。",
         },
     ]
     for step in steps:
@@ -321,7 +328,7 @@ def pipeline() -> dict:
         hint = "まずデモを実行するか、data/inbox にミッションフォルダを置いて取り込んでください。"
         hint_step = "collect"
     elif labeled == 0:
-        hint = "サンプルはあります。Label Studio でラベルを付けてください。"
+        hint = "サンプルはあります。工程3で Label Studio / SALT / Xtreme1 を選んでラベルを付けてください。"
         hint_step = "annotate"
     elif datasets == 0:
         hint = "ラベル済みです。データセットの版を切ってください。"
@@ -712,7 +719,7 @@ def get_job(job_id: str) -> dict:
         row = conn.execute(text("SELECT * FROM job WHERE job_id = :id"), {"id": job_id}).mappings().first()
     if not row:
         raise HTTPException(404, "job not found")
-    return dict(row)
+    return jsonable_encoder(dict(row))
 
 
 @app.get("/samples/{sample_id}/file")
@@ -730,10 +737,31 @@ def sample_file(sample_id: str):
         raise HTTPException(404, "sample not found")
     bucket, key = parse_s3_uri(row["object_uri"])
     obj = client().get_object(bucket, key)
-    media = "image/jpeg"
-    if key.lower().endswith(".png"):
+    lower = key.lower()
+    media = "application/octet-stream"
+    if lower.endswith(".png"):
         media = "image/png"
+    elif lower.endswith((".jpg", ".jpeg")):
+        media = "image/jpeg"
+    elif lower.endswith(".jsonl"):
+        media = "application/jsonl"
+    elif lower.endswith(".pcd"):
+        media = "application/octet-stream"
     return StreamingResponse(obj.stream(32 * 1024), media_type=media)
+
+
+@app.get("/data/missions")
+def data_missions() -> dict:
+    from ugv_mlops.preview import list_missions as preview_list
+
+    return jsonable_encoder({"missions": preview_list()})
+
+
+@app.get("/data/missions/{mission_id}")
+def data_mission(mission_id: str) -> dict:
+    from ugv_mlops.preview import mission_preview
+
+    return jsonable_encoder(mission_preview(mission_id))
 
 
 @app.get("/integrations")
@@ -751,6 +779,133 @@ def dvc_status() -> dict:
     st = dvc_status_fn()
     st["missions"] = list_missions()
     return st
+
+
+@app.get("/inbox")
+def list_inbox() -> dict:
+    """ホストの data/inbox とコンテナの /data/inbox は同じ。ポータルの取込フォーム用。"""
+    root = settings.inbox_path
+    items = []
+    if root.exists():
+        for path in sorted(root.iterdir()):
+            if not path.is_dir():
+                continue
+            files = 0
+            for child in path.rglob("*"):
+                if child.is_file():
+                    files += 1
+                    if files >= 500:
+                        break
+            items.append(
+                {
+                    "mission_id": path.name,
+                    "path": f"/data/inbox/{path.name}",
+                    "files": files,
+                }
+            )
+    return {"root": "/data/inbox", "missions": items}
+
+
+@app.get("/flow-options")
+def flow_options() -> dict:
+    """ポータルの工程フォーム用。前工程の成果だけを次のドロップダウンに出す。"""
+    inbox = list_inbox()["missions"]
+    with connect() as conn:
+        missions = conn.execute(
+            text(
+                """
+                SELECT m.mission_id,
+                       count(s.sample_id)::int AS samples,
+                       count(s.sample_id) FILTER (WHERE starts_with(s.modality, 'camera'))::int AS cameras,
+                       count(s.sample_id) FILTER (WHERE s.modality IN ('action', 'cmd_vel'))::int AS actions,
+                       count(DISTINCT a.sample_id)::int AS labeled
+                FROM mission m
+                LEFT JOIN learning_sample s ON s.mission_id = m.mission_id
+                LEFT JOIN annotation a ON a.sample_id = s.sample_id
+                GROUP BY m.mission_id, m.created_at
+                HAVING count(s.sample_id) > 0
+                ORDER BY m.created_at DESC
+                LIMIT 50
+                """
+            )
+        ).mappings().all()
+        label_rows = conn.execute(
+            text("SELECT label_type, count(*)::int AS n FROM annotation GROUP BY label_type")
+        ).mappings().all()
+        label_types = {str(r["label_type"]): int(r["n"]) for r in label_rows}
+        actions = _count(
+            conn, "SELECT count(*) FROM learning_sample WHERE modality IN ('action', 'cmd_vel')"
+        )
+        datasets = conn.execute(
+            text(
+                """
+                SELECT d.dataset_id, d.name, d.task, v.dataset_version_id, v.version, v.created_at
+                FROM dataset d
+                JOIN dataset_version v ON v.dataset_id = d.dataset_id
+                ORDER BY v.created_at DESC
+                LIMIT 50
+                """
+            )
+        ).mappings().all()
+        runs = conn.execute(
+            text(
+                """
+                SELECT run_id, dataset_version_id, task, stage, status, created_at
+                FROM training_run
+                ORDER BY created_at DESC
+                LIMIT 30
+                """
+            )
+        ).mappings().all()
+        models = conn.execute(
+            text(
+                """
+                SELECT model_id, name, version, stage, status, created_at
+                FROM model_version
+                WHERE status IN ('staging', 'canary', 'production')
+                ORDER BY created_at DESC
+                LIMIT 30
+                """
+            )
+        ).mappings().all()
+        packages = conn.execute(
+            text(
+                """
+                SELECT package_id, model_id, target_stage, size_bytes, created_at
+                FROM update_package
+                ORDER BY created_at DESC
+                LIMIT 30
+                """
+            )
+        ).mappings().all()
+    from ugv_mlops.annotate_io import ANNOTATE_TOOLS
+
+    n_class = int(label_types.get("class") or 0)
+    n_bbox = int(label_types.get("bbox") or 0)
+    if n_bbox > n_class:
+        suggested_task = "detection"
+    elif n_class > 0:
+        suggested_task = "obstacle_cls"
+    elif actions > 0:
+        suggested_task = "e2e"
+    else:
+        suggested_task = "obstacle_cls"
+    return jsonable_encoder(
+        {
+            "inbox": inbox,
+            "missions": [dict(r) for r in missions],
+            "datasets": [dict(r) for r in datasets],
+            "runs": [dict(r) for r in runs],
+            "models": [dict(r) for r in models],
+            "packages": [dict(r) for r in packages],
+            "label_types": label_types,
+            "actions": actions,
+            "suggested_task": suggested_task,
+            "annotate_tools": [
+                {"id": tid, **spec} for tid, spec in ANNOTATE_TOOLS.items()
+            ],
+        }
+    )
 
 
 @app.get("/missions")
@@ -841,6 +996,12 @@ def annotate_import(req: AnnotateImportReq) -> dict:
     return {"job_id": enqueue("annotate_import_masks", req.model_dump())}
 
 
+@app.post("/annotate/import-jsonl")
+def annotate_import_jsonl(req: AnnotateJsonlReq) -> dict:
+    JOBS_ENQUEUED.labels("annotate_import_jsonl").inc()
+    return {"job_id": enqueue("annotate_import_jsonl", req.model_dump())}
+
+
 @app.post("/ingest")
 def ingest(req: IngestReq) -> dict:
     if not Path(req.path).exists():
@@ -865,6 +1026,22 @@ def train(req: TrainReq) -> dict:
 def gate(req: GateReq) -> dict:
     JOBS_ENQUEUED.labels("gate").inc()
     return {"job_id": enqueue("gate", req.model_dump())}
+
+
+@app.get("/packages")
+def list_packages() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT package_id, model_id, target_stage, size_bytes, created_at
+                FROM update_package
+                ORDER BY created_at DESC
+                LIMIT 50
+                """
+            )
+        ).mappings().all()
+    return [dict(r) for r in rows]
 
 
 @app.post("/packages")
@@ -903,3 +1080,9 @@ def demo_e2e() -> dict:
 def demo_yolox() -> dict:
     JOBS_ENQUEUED.labels("demo_yolox").inc()
     return {"job_id": enqueue("demo_yolox", {})}
+
+
+@app.post("/demo-rosbag")
+def demo_rosbag() -> dict:
+    JOBS_ENQUEUED.labels("demo_rosbag").inc()
+    return {"job_id": enqueue("demo_rosbag", {})}

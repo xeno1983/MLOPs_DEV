@@ -463,13 +463,14 @@ model_id（必須） ─ package_id（任意、最新パッケージを自動紐
 
 ## 9. デモが通す経路
 
-ポータルの 3 ボタンは、同じ 8 工程を **入力だけ変えて** 回す。
+ポータルのデモボタンは、同じ 8 工程を **入力だけ変えて** 回す。
 
 | ボタン | 入力 | task | 学習器 |
 |--------|------|------|--------|
 | 知覚デモ | 合成 JPEG + class ラベル | obstacle_cls | LogisticRegression |
 | E2Eデモ | 合成カメラ + imu/lidar/cmd_vel | e2e | Ridge |
 | YOLOXデモ | COCO128（公開）+ 公式 nano 重み | detection | YOLOX-Nano 短 fine-tune |
+| rosbag2デモ | CostNav Teleop 公開 MCAP（カメラ+LiDAR+cmd_vel） | e2e | bag 取込 → E2E Ridge。ゲートは `smoke` |
 
 YOLOX デモの COCO128 は COCO train の部分集合なので、mAP は **パイプラインが最後まで繋がることの確認** 用である。実任務では別ミッションを holdout にする。
 

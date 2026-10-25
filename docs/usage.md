@@ -141,6 +141,16 @@ Invoke-RestMethod "http://localhost:8000/jobs/$($job.job_id)"
 
 またはポータルの「YOLOXデモ」。データ契約は [docs/dataset.md](dataset.md) の検出セクションです。
 
+公開 ROS2 bag（CostNav Teleop: 前方カメラ + LiDAR + `/cmd_vel`）で bag 取込から E2E まで回す:
+
+```powershell
+$job = Invoke-RestMethod -Method POST http://localhost:8000/demo-rosbag
+# 初回は Hugging Face から約 360MB 取得。inbox は data/inbox/M-AVBAG-001/
+Invoke-RestMethod "http://localhost:8000/jobs/$($job.job_id)"
+```
+
+またはポータルの「rosbag2デモ」。Autoware 公式サンプル bag はカメラが削られているので使いません。短いクリップなのでゲートは `smoke` です。
+
 ---
 
 ## 本番に近い一連の作業

@@ -58,6 +58,22 @@ def demo_yolox(max_images: int = 48) -> None:
     raise typer.Exit(0 if result.get("ok") else 1)
 
 
+@app.command("prepare-av-rosbag")
+def prepare_av_rosbag_cmd(max_seconds: float = 12.0) -> None:
+    from ugv_mlops.av_rosbag_sample import prepare_av_rosbag
+
+    typer.echo(json.dumps(prepare_av_rosbag(max_seconds=max_seconds), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("demo-rosbag")
+def demo_rosbag(max_seconds: float = 12.0) -> None:
+    from ugv_mlops.demo import run_av_rosbag_demo
+
+    result = run_av_rosbag_demo(max_seconds=max_seconds)
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
 @app.command("build-dataset")
 def build_dataset_cmd(dataset_id: str, name: str = "", task: str = "obstacle_cls") -> None:
     from ugv_mlops.dataset import build_dataset
@@ -221,10 +237,17 @@ def annotate_status_cmd() -> None:
 
 
 @app.command("annotate-init")
-def annotate_init_cmd(mission_id: str, kind: str = "camera", limit: int = 200) -> None:
+def annotate_init_cmd(
+    mission_id: str,
+    kind: str = "auto",
+    limit: int = 200,
+    tool: str = "labelstudio",
+) -> None:
     from ugv_mlops.annotate_io import init_session
 
-    typer.echo(json.dumps(init_session(mission_id, kind, limit), indent=2, default=str, ensure_ascii=False))
+    typer.echo(
+        json.dumps(init_session(mission_id, kind, limit, tool), indent=2, default=str, ensure_ascii=False)
+    )
 
 
 @app.command("annotate-import-masks")

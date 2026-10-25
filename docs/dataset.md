@@ -113,6 +113,18 @@ docker compose exec catalog python -m ugv_mlops.cli bag-topics /data/inbox/M-202
 
 ベースライン学習器は画像統計＋センサを入力とする Ridge です。本番の時系列ネットワークに差し替えるときは `src/ugv_mlops/e2e.py` の `train_e2e` を置き換えてください。
 
+## 公開 rosbag2（CostNav → E2E）
+
+公式 Autoware サンプル bag はプライバシーのため **カメラが無い**。代わりに公開の [CostNav Teleop](https://huggingface.co/datasets/maum-ai/CostNav-Teleop-Dataset)（ROS 2 Jazzy MCAP、前方圧縮画像・LiDAR・IMU・odom・`/cmd_vel`）を短く切って inbox に置きます。人手ラベルは不要で E2E の 8 工程が回ります。クリップが短いためゲートは `smoke`（MAE 上限は staging より緩い）。実任務モデルは staging / production を使います。
+
+```powershell
+.\scripts\prepare-av-rosbag.ps1
+# またはポータルの「rosbag2デモ」
+Invoke-RestMethod -Method POST http://localhost:8000/demo-rosbag
+```
+
+inbox は `data/inbox/M-AVBAG-001/`（`metadata.yaml` + `.db3`）。元エピソードは cache `data/cache/av_rosbag/`。任務データではなくパイプライン確認用です。
+
 ## 検出（YOLOX + 公開データセット）
 
 サンプルは **COCO128**（Ultralytics が配っている COCO train2017 の 128 枚）と公式 **YOLOX-Nano** 重みです。

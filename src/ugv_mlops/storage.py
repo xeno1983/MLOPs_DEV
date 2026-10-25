@@ -47,6 +47,15 @@ def get_file(bucket: str, key: str, dest: Path) -> Path:
     return dest
 
 
+def get_bytes(bucket: str, key: str) -> bytes:
+    obj = client().get_object(bucket, key)
+    try:
+        return obj.read()
+    finally:
+        obj.close()
+        obj.release_conn()
+
+
 def parse_s3_uri(uri: str) -> tuple[str, str]:
     if not uri.startswith("s3://"):
         raise ValueError(f"not an s3 uri: {uri}")
