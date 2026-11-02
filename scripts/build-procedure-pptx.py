@@ -156,7 +156,7 @@ def cover(prs):
         box,
         [
             ("データ取り込みから車載デプロイまで", 22, False, TEAL),
-            ("実際のポータル画面に沿った 8 工程", 18, False, MUTED),
+            ("実際のポータル画面に沿った 11 工程", 18, False, MUTED),
             ("入口  http://127.0.0.1:8080", 16, False, ACCENT2),
         ],
     )
@@ -168,32 +168,35 @@ def overview(prs):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     bg(slide)
     bar(slide)
-    title_box(slide, "全体の流れ（8 工程）")
+    title_box(slide, "全体の流れ（11 工程）")
     steps = [
-        ("1", "帰還データを置く", "inbox フォルダへ bag / 画像"),
-        ("2", "カタログへ取り込む", "パース・Garage 保管"),
-        ("3", "ラベルを付ける", "LS / SALT / Xtreme1"),
-        ("4", "データセットを切る", "知覚 / 検出 / E2E"),
-        ("5", "学習する", "指標は MLflow"),
-        ("6", "評価して通す", "ゲート + 署名"),
-        ("7", "車載パッケージ", "S3 / S1 向け zip"),
-        ("8", "UGV へ同期", "チャンク配送 → acked"),
+        ("1", "シミュで作る", "CARLA → inbox（任意）"),
+        ("2", "置く", "帰還／シミュを inbox へ"),
+        ("3", "取り込む", "Catalog / Garage"),
+        ("4", "データ確認", "カメラ・cmd_vel"),
+        ("5", "ラベル", "LS / SALT"),
+        ("6", "突き合わせ", "Xtreme1 確認"),
+        ("7", "データセット", "知覚 / 検出 / E2E"),
+        ("8", "学習", "MLflow"),
+        ("9", "ゲート", "評価 + 署名"),
+        ("10", "軽量化", "ONNX 等"),
+        ("11", "梱包・同期", "パッケージ → UGV"),
     ]
     for i, (n, t, d) in enumerate(steps):
-        col = i % 4
-        row = i // 4
-        x = 0.45 + col * 3.2
-        y = 1.15 + row * 2.85
+        col = i % 6
+        row = i // 6
+        x = 0.35 + col * 2.1
+        y = 1.2 + row * 2.7
         card = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(3.0), Inches(2.5)
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(1.95), Inches(2.4)
         )
         fill(card, PANEL)
-        num = slide.shapes.add_textbox(Inches(x + 0.18), Inches(y + 0.2), Inches(2.6), Inches(0.4))
-        write_lines(num, [(f"工程 {n}", 12, True, TEAL)])
-        ttl = slide.shapes.add_textbox(Inches(x + 0.18), Inches(y + 0.65), Inches(2.6), Inches(0.9))
-        write_lines(ttl, [(t, 18, True, WHITE)])
-        dsc = slide.shapes.add_textbox(Inches(x + 0.18), Inches(y + 1.55), Inches(2.6), Inches(0.7))
-        write_lines(dsc, [(d, 13, False, MUTED)])
+        num = slide.shapes.add_textbox(Inches(x + 0.1), Inches(y + 0.15), Inches(1.75), Inches(0.35))
+        write_lines(num, [(f"工程 {n}", 11, True, TEAL)])
+        ttl = slide.shapes.add_textbox(Inches(x + 0.1), Inches(y + 0.55), Inches(1.75), Inches(0.85))
+        write_lines(ttl, [(t, 14, True, WHITE)])
+        dsc = slide.shapes.add_textbox(Inches(x + 0.1), Inches(y + 1.5), Inches(1.75), Inches(0.7))
+        write_lines(dsc, [(d, 11, False, MUTED)])
 
 
 def start_slide(prs):
@@ -290,10 +293,12 @@ def notes_slide(prs):
     bar(slide)
     title_box(slide, "運用上の注意")
     items = [
-        "知覚（分類・検出）はラベルなしでデータセットを切らない。E2E は cmd_vel が教師なので工程3をスキップ可。",
+        "知覚（分類・検出）はラベルなしでデータセットを切らない。E2E は cmd_vel が教師なので工程5–6をスキップ可。",
         "UNCLASSIFIED 以外のサンプルは解除するまで学習セットに入らない。",
         "公開 rosbag2 デモは短いクリップ確認用。ゲートは smoke。実任務モデルは staging / production。",
-        "SALT / Xtreme1 は本 compose に載せない。工程3で作業ファイルを data/annotate に出してから各 GUI を使う。",
+        "工程4・5・10 は失敗を隠さない（空 bag / LS 投入失敗 / ONNX 失敗はジョブ failed）。",
+        "SALT / Xtreme1 は本 compose に載せない。工程5で作業、確認は工程6（Xtreme1）。",
+        "CARLA / TensorRT も本 compose 外。同期実体は data/work/vehicles/<車両>/inbox/。",
         "Xtreme1 の MinIO（:8193/:8194）と本スタックの Garage（:9000）は別。キーを混ぜない。",
         "ブラウザは http://127.0.0.1:... を使う（localhost だと IPv6 で失敗することがある）。",
         "失敗ジョブはダッシュボードの「最近の動き」か GET /jobs/{id} の error / reasons を見る。",
@@ -311,6 +316,7 @@ def end_slide(prs):
     write_lines(
         box,
         [
+            ("docs/pipeline-stages.md　11 工程の定義", 18, False, TEXT),
             ("docs/usage.md　日常操作", 18, False, TEXT),
             ("docs/annotation.md　Label Studio / SALT / Xtreme1", 18, False, TEXT),
             ("docs/workflow.md　四脚 PJ との層対応", 18, False, TEXT),
@@ -328,10 +334,22 @@ def build() -> Path:
     start_slide(prs)
     wide_shot(prs, "ダッシュボード — いまやること", "01_dashboard.png", "「いまやること」と工程カードから次の作業に進みます。")
     wide_shot(prs, "データタブ — 撮りためた中身を見る", "03_data_preview.png", "ミッションを選ぶとカメラ・cmd_vel / IMU・LiDAR（上から）が出ます。")
-    wide_shot(prs, "8 工程フロー", "04_flow_overview.png", "上のカードを押すと、その工程の実行フォームが下に出ます。Swagger を開く必要はありません。")
+    wide_shot(prs, "11 工程フロー", "04_flow_overview.png", "上のカードを押すと、その工程の実行フォームが下に出ます。定義は docs/pipeline-stages.md。")
     shot_slide(
         prs,
-        "工程1  帰還データを置く",
+        "工程1  シミュでデータを作る（任意）",
+        "05_step1_collect.png",
+        [
+            "Autoware_e2e / CARLA（本 compose 外）で走行を録る。",
+            "rosbag2 を data\\inbox\\<mission>\\ に置く。",
+            "inbox のミッションを選び「シミュ結果を確認した」（bag 実在を検証）。",
+            "実機帰還だけならスキップして工程2へ。シミュ本体は本スタックに載せない。",
+        ],
+        "詳細は docs/pipeline-stages.md。",
+    )
+    shot_slide(
+        prs,
+        "工程2  帰還／シミュ結果を置く",
         "05_step1_collect.png",
         [
             "ホストの data\\inbox\\<mission_id>\\ にコピーします。",
@@ -344,7 +362,7 @@ def build() -> Path:
     )
     shot_slide(
         prs,
-        "工程2  カタログへ取り込む",
+        "工程3  カタログへ取り込む",
         "06_step2_ingest.png",
         [
             "inbox のフォルダを選ぶ（または名前を入力）。",
@@ -356,29 +374,39 @@ def build() -> Path:
     )
     shot_slide(
         prs,
-        "工程3  ラベルを付ける（ツールを選ぶ）",
+        "工程4  取込データを確認する",
+        "03_data_preview.png",
+        [
+            "ミッションを選び「取込内容を確認して合格」（POST /data-qa）。",
+            "カメラ・cmd_vel・サンプル件数を検査。空・未取込はジョブ failed。",
+            "知覚なのにカメラなしも不合格。データタブでも中身を確認。",
+        ],
+    )
+    shot_slide(
+        prs,
+        "工程5  ラベルを付ける（ツールを選ぶ）",
         "07_step3_annotate.png",
         [
             "ミッションを選ぶ。",
             "アノテーションツールを選ぶ。",
             "  ・Label Studio … 画像クラス / bbox",
             "  ・SALT … LiDAR 点群（WSL GUI）",
-            "  ・Xtreme1 … カメラと点群の確認",
             "「作業データを出す」で data\\annotate に書き出す。",
-            "SALT / Xtreme1 の結果 jsonl は「結果を Catalog に戻す」。",
-            "E2E（cmd_vel 教師）はスキップして工程4へ。",
+            "SALT の結果 jsonl は「結果を Catalog に戻す」。",
+            "E2E（cmd_vel 教師）は工程5–6をスキップして工程7へ。",
         ],
         "知覚はラベル必須。未ラベルのまま obstacle_cls / detection は切れません。",
     )
     shot_slide(
         prs,
-        "工程3  Label Studio（画像）",
+        "工程5  Label Studio（画像）",
         "14_step3_labelstudio.png",
         [
             "ツールに Label Studio を選んで投入する。",
             "http://127.0.0.1:8081 でログイン。",
             "プロジェクト UGV-obstacle-cls。",
             "クラスは clear / obstacle / person。",
+            "投入失敗時はジョブが failed（ソフト成功しない）。",
             "データセット構築時に Catalog が export して annotation へ戻す。",
         ],
     )
@@ -386,31 +414,30 @@ def build() -> Path:
         wide_shot(prs, "Label Studio 画面", "16_labelstudio.png", "admin@ugv.local / label_change_me（デモ初期値）")
     shot_slide(
         prs,
-        "工程3  SALT（点群）",
+        "工程5  SALT（点群）",
         "07_step3_annotate.png",
         [
             "ツールに SALT を選ぶ。",
             "点群が data\\annotate\\<mission>\\lidar に .pcd で出る。",
             "WSL Ubuntu-24.04、conda 環境 SALT で GUI を開く。",
             "塗った結果を export.jsonl（各行 sample_id + label_json）に書く。",
-            "工程3の「結果を Catalog に戻す」。",
+            "工程5の「結果を Catalog に戻す」。",
         ],
     )
     shot_slide(
         prs,
-        "工程3  Xtreme1（確認）",
+        "工程6  ラベル・センサを突き合わせ確認",
         "13_step3_xtreme1.png",
         [
-            "ツールに Xtreme1 を選ぶと画像と .pcd を出す。",
-            "http://127.0.0.1:8190 を開く（Autoware compose。本スタック外）。",
-            "初回は画面の Sign up。",
-            "箱検出の確認用。Freespace マスクには使わない。",
-            "書き出しがあれば export.jsonl を戻す。",
+            "確認用データを出し、http://127.0.0.1:8190（Xtreme1）を開く。",
+            "カメラと点群を突き合わせる（Freespace マスクには使わない）。",
+            "「確認完了として記録」で監査を残してから版切り。",
+            "E2E ならスキップ可。",
         ],
     )
     shot_slide(
         prs,
-        "工程4  学習用データセットを切る",
+        "工程7  学習用データセットを切る",
         "08_step4_dataset.png",
         [
             "データセット ID と表示名を入れる。",
@@ -418,12 +445,13 @@ def build() -> Path:
             "  ・obstacle_cls … 知覚分類（ラベル必須）",
             "  ・detection … YOLOX（bbox）",
             "  ・e2e … カメラ + cmd_vel（人手ラベル不要）",
+            "ミッション ID を入れるとミッション単位に絞れる（autoe2e は必須）。",
             "「データセットを生成」。版 ID（例 ds-av-rosbag-v2）を控える。",
         ],
     )
     shot_slide(
         prs,
-        "工程5  学習する",
+        "工程8  学習する",
         "09_step5_train.png",
         [
             "データセット版を選ぶ。",
@@ -437,37 +465,37 @@ def build() -> Path:
         wide_shot(prs, "MLflow — 学習指標", "17_mlflow.png", "実験 ugv-obstacle-cls / ugv-e2e / 検出。run を開いて metrics を確認します。")
     shot_slide(
         prs,
-        "工程6  評価して通す（ゲート）",
+        "工程9  評価して通す（ゲート）",
         "10_step6_gate.png",
         [
             "学習 run を選ぶ。",
-            "ゲートは staging または production。",
+            "ゲートは staging / production / smoke（デモ短クリップ）。",
             "「ゲートを実行」。通ると model_id と署名が付く。",
-            "閾値は configs/artifact_policy.yaml。",
-            "公開サンプルの短いクリップは smoke（デモ専用）。",
+            "閾値と実アーティファクトサイズを configs/artifact_policy.yaml で検査。",
+            "smoke 合格後の status は staging（梱包可能）。",
             "不合格なら reasons を読んでデータを足すか閾値を見直す。",
         ],
     )
     shot_slide(
         prs,
-        "工程7  車載パッケージを作る",
+        "工程10  モデルを軽量化する",
         "11_step7_package.png",
         [
-            "ゲート合格モデル（staging / canary / production）を選ぶ。",
-            "対象段階 S3（前線）または S1（車載・小さい成果物のみ）。",
-            "「パッケージを作る」。Garage packages に zip。",
-            "フル重みは S3/S4。S1 はアダプタ等の小さいものだけ。",
+            "S3/S4: ONNX。S1（車載）: adapter（onnx は不可）。",
+            "変換失敗はジョブ failed。偽の軽量成果物は作らない。",
+            "既に同じ kind ならスキップして工程11へ。",
+            "TensorRT エンジン化は車載／Autoware 側（本スタック外）。",
         ],
     )
     shot_slide(
         prs,
-        "工程8  UGV へ差分同期",
+        "工程11  梱包して UGV へ同期",
         "12_step8_sync.png",
         [
-            "パッケージと車両 ID（例 UGV-01）を入れる。",
-            "「同期を実行」。チャンク送信までこの画面で完了する。",
-            "全部送れると acked。失敗時はロールバック。",
-            "OS イメージ更新とは分け、モデル zip だけを送る。",
+            "対象段に合うモデルだけ一覧に出る（S1 は小さい kind）。",
+            "「梱包して同期」→ Garage zip → チャンクで車両 inbox へ実書き込み。",
+            "完了ファイル: data\\work\\vehicles\\<車両>\\inbox\\<package>.zip（sha256 検証）。",
+            "全部送れると acked。失敗時はロールバック。OS イメージ更新とは分ける。",
         ],
     )
     shot_slide(
@@ -478,7 +506,7 @@ def build() -> Path:
             "課題タブで、デプロイ済みモデルに紐づけて起票。",
             "着手 → 解決（または対応しない / 再オープン）。",
             "ダッシュボードの「未解決課題」から同じ一覧に入れる。",
-            "再現データは inbox に戻して工程2から再学習できる。",
+            "再現データは inbox に戻して工程3から再学習できる。",
         ],
     )
     wide_shot(

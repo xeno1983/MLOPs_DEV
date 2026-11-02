@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     annotate_dir: str = "data/annotate"
     autoware_e2e_root: str = r"C:\Users\xeno1\Autoware_e2e"
     xtreme1_url: str = "http://localhost:8190"
+    # どのワーカーがジョブを拾うか。docker = compose の worker（CPU）、host = GPU ホストワーカー。
+    job_runner: str = "docker"
+    # AutoE2E（Autoware auto_e2e）オフロード微調整。GPU が要るのでホストワーカーが回す。
+    autoe2e_python: str = ""  # 空なら <AUTOWARE_E2E_ROOT>/.venv-autoe2e の python
+    autoe2e_rig: str = ""  # 空なら <AUTOWARE_E2E_ROOT>/config/rosbag2_autoe2e/rig.yaml
+    autoe2e_epochs: int = 3
+    autoe2e_stride: int = 5
+    autoe2e_accum_steps: int = 8
+    autoe2e_extra_args: str = ""  # 例: "--max-train-samples 200 --val-scenes S1"
 
     @property
     def inbox_path(self) -> Path:

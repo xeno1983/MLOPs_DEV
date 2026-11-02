@@ -264,6 +264,62 @@ def annotate_import_jsonl_cmd(path: Path, tool: str = "salt") -> None:
     typer.echo(json.dumps(import_jsonl(path, tool), indent=2, default=str, ensure_ascii=False))
 
 
+@app.command("data-qa")
+def data_qa_cmd(mission_id: str, note: str = "") -> None:
+    from ugv_mlops.pipeline_qa import run_data_qa
+
+    typer.echo(json.dumps(run_data_qa(mission_id, True, note), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("label-review")
+def label_review_cmd(mission_id: str, note: str = "") -> None:
+    from ugv_mlops.pipeline_qa import run_label_review
+
+    typer.echo(json.dumps(run_label_review(mission_id, True, note), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("lighten")
+def lighten_cmd(model_id: str, kind: str = "onnx", target_stage: str = "") -> None:
+    from ugv_mlops.lighten import export_model
+
+    typer.echo(
+        json.dumps(
+            export_model(model_id, kind, target_stage or None),
+            indent=2,
+            default=str,
+            ensure_ascii=False,
+        )
+    )
+
+
+@app.command("carla-status")
+def carla_status_cmd() -> None:
+    from ugv_mlops.carla_bridge import status
+
+    typer.echo(json.dumps(status(), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("carla-bags")
+def carla_bags_cmd() -> None:
+    from ugv_mlops.carla_bridge import list_bags
+
+    typer.echo(json.dumps(list_bags(), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("carla-import")
+def carla_import_cmd(source: str, mission_id: str = "", note: str = "") -> None:
+    from ugv_mlops.carla_bridge import import_bag_to_inbox
+
+    typer.echo(
+        json.dumps(
+            import_bag_to_inbox(source, mission_id or None, note),
+            indent=2,
+            default=str,
+            ensure_ascii=False,
+        )
+    )
+
+
 @app.command()
 def keys() -> None:
     from ugv_mlops.gate import ensure_signing_keys

@@ -56,6 +56,8 @@ class DatasetReq(BaseModel):
 class TrainReq(BaseModel):
     dataset_version_id: str
     stage: str | None = None
+    # task=autoe2e のみ: {"epochs": 3, "stride": 5, "accum_steps": 8, "extra": "--val-scenes X"}
+    params: dict | None = None
 
 
 class GateReq(BaseModel):
@@ -103,6 +105,37 @@ class AnnotateImportReq(BaseModel):
 class AnnotateJsonlReq(BaseModel):
     path: str
     tool: str = "salt"
+
+
+class DataQaReq(BaseModel):
+    mission_id: str
+    confirm: bool = True
+    note: str = ""
+
+
+class LabelReviewReq(BaseModel):
+    mission_id: str
+    confirm: bool = True
+    note: str = ""
+
+
+class SimGenerateAckReq(BaseModel):
+    note: str = ""
+    mission_id: str | None = None
+    action: str = "ack"  # ack | import
+    source: str | None = None  # CARLA bag path (relpath under Autoware or absolute)
+
+
+class CarlaImportReq(BaseModel):
+    source: str
+    mission_id: str | None = None
+    note: str = ""
+
+
+class LightenReq(BaseModel):
+    model_id: str
+    kind: str = "onnx"
+    target_stage: str | None = None
 
 
 class IssueCreateReq(BaseModel):
@@ -246,92 +279,171 @@ def pipeline() -> dict:
             conn,
             "SELECT count(*) FROM model_issue WHERE status IN ('open', 'in_progress')",
         )
+        actions = _count(
+            conn, "SELECT count(*) FROM learning_sample WHERE modality IN ('action', 'cmd_vel')"
+        )
+
+    from ugv_mlops.pipeline_qa import count_audit, count_light_models
+
+    sim_acks = count_audit("pipeline.sim_generate")
+    data_qa_n = count_audit("data_qa.passed")
+    label_rev_n = count_audit("label_review.passed")
+    light_n = count_light_models()
+    e2e_ready = actions > 0 and labeled == 0
 
     steps = [
         {
-            "id": "collect",
+            "id": "sim_generate",
             "n": 1,
-            "title": "帰還データを置く",
+            "title": "シミュでデータを作る",
+            "tool": "CARLA / Autoware_e2e（compose 外）",
+            "phase": "取得",
+            "count": sim_acks,
+            "unit": "確認済",
+            "optional": True,
+            "how": "CARLA 等で rosbag2 を録り data/inbox へ。実機だけならスキップ可。docs/pipeline-stages.md。",
+        },
+        {
+            "id": "collect",
+            "n": 2,
+            "title": "帰還／シミュ結果を置く",
             "tool": "data/inbox",
+            "phase": "取得",
             "count": missions,
             "unit": "ミッション",
-            "how": "UGV帰還データを data/inbox/<mission>/ へ。ROS2 bag（metadata.yaml + .db3 / .mcap）でも、画像フォルダでも可。",
+            "how": "data/inbox/<mission>/ へ bag または画像。実機・シミュ・公開サンプルは同じ入口。",
         },
         {
             "id": "ingest",
-            "n": 2,
+            "n": 3,
             "title": "カタログへ取り込む",
             "tool": "Catalog / Garage raw",
+            "phase": "取得",
             "count": samples,
             "unit": "サンプル",
-            "how": "下のボタンで取込（追跡・パース・保管まで一括）。bag なら cameras/、lidar/*.bin、localization、cmd_vel を Garage と DVC へ。",
+            "how": "取込（追跡・パース・保管）。cameras / lidar / cmd_vel を Garage と DVC へ。",
+        },
+        {
+            "id": "data_qa",
+            "n": 4,
+            "title": "取込データを確認する",
+            "tool": "データタブ / data-qa",
+            "phase": "取得",
+            "count": data_qa_n,
+            "unit": "確認済",
+            "how": "カメラ・action・トピックを確認し合格を記録。空 bag のまま版切りしない。",
         },
         {
             "id": "annotate",
-            "n": 3,
+            "n": 5,
             "title": "ラベルを付ける",
-            "tool": "Label Studio / SALT / Xtreme1",
+            "tool": "Label Studio / SALT / SAM",
+            "phase": "教師",
             "count": labeled,
             "unit": "ラベル済み",
-            "how": "ツールを選んで作業データを出す。画像クラスは Label Studio、点群は SALT、カメラと点群の確認は Xtreme1。E2E（cmd_vel 教師）はスキップ可。",
+            "optional": e2e_ready,
+            "how": "画像は Label Studio、点群は SALT、Freespace は SAM。E2E（cmd_vel）はスキップ可。",
+        },
+        {
+            "id": "label_review",
+            "n": 6,
+            "title": "ラベル・センサを突き合わせ確認",
+            "tool": "Xtreme1 :8190",
+            "phase": "教師",
+            "count": label_rev_n,
+            "unit": "確認済",
+            "optional": e2e_ready,
+            "how": "Xtreme1 でカメラと点群を確認し合格を記録。Freespace マスクには使わない。",
         },
         {
             "id": "dataset",
-            "n": 4,
+            "n": 7,
             "title": "学習用データセットを切る",
             "tool": "Garage datasets",
+            "phase": "学習",
             "count": datasets,
             "unit": "版",
-            "how": "下のボタンで版を切る。知覚は obstacle_cls、検出は detection（YOLOX）、E2E は e2e。",
+            "how": "obstacle_cls / detection / e2e。知覚はラベル必須。",
         },
         {
             "id": "train",
-            "n": 5,
+            "n": 8,
             "title": "学習する",
             "tool": "MLflow",
+            "phase": "学習",
             "count": runs,
             "unit": "実験",
-            "how": "下のボタンで学習。分類は精度、検出は YOLOX の mAP@0.5、E2E は steer/speed の MAE。指標は MLflow。",
+            "how": "分類は精度、検出は mAP@0.5、E2E は MAE。指標は MLflow。",
         },
         {
             "id": "gate",
-            "n": 6,
-            "title": "評価して通す",
+            "n": 9,
+            "title": "指標で通す",
             "tool": "ゲート + 署名",
+            "phase": "学習",
             "count": passed,
             "unit": "合格モデル",
-            "how": "下のボタンでゲート判定。分類は精度・FPR、検出は map50、E2E は MAE。通ったものだけ署名される。",
+            "how": "staging / production / smoke。通ったものだけ署名される。",
         },
         {
-            "id": "package",
-            "n": 7,
-            "title": "車載パッケージを作る",
-            "tool": "Garage packages",
-            "count": packages,
-            "unit": "パッケージ",
-            "how": "下のボタンで車載パッケージを作る。S1 は小さい成果物のみ。フル重みは S3/S4。",
+            "id": "lighten",
+            "n": 10,
+            "title": "モデルを軽量化する",
+            "tool": "ONNX export",
+            "phase": "配備",
+            "count": light_n,
+            "unit": "軽量モデル",
+            "optional": True,
+            "how": "合格モデルから ONNX 等を切る。既に小さい成果物ならスキップ可。TensorRT は車載側。",
         },
         {
-            "id": "sync",
-            "n": 8,
-            "title": "UGV へ差分同期",
-            "tool": "チャンク配送",
+            "id": "package_sync",
+            "n": 11,
+            "title": "梱包して UGV へ同期",
+            "tool": "Garage packages + chunk",
+            "phase": "配備",
             "count": acked,
             "unit": "配送完了",
-            "how": "下のボタンで同期し、チャンク送信までこの画面で完了する。失敗時はロールバック。",
+            "how": "パッケージ作成とチャンク同期。S1 は小さい成果物のみ。",
         },
     ]
     for step in steps:
         step["done"] = int(step["count"] or 0) > 0
 
     if samples == 0:
-        hint = "まずデモを実行するか、data/inbox にミッションフォルダを置いて取り込んでください。"
-        hint_step = "collect"
-    elif labeled == 0:
-        hint = "サンプルはあります。工程3で Label Studio / SALT / Xtreme1 を選んでラベルを付けてください。"
+        hint = "シミュ（工程1）か実機データを data/inbox に置き、工程2〜3で取り込んでください。"
+        hint_step = "collect" if missions == 0 else "ingest"
+    elif data_qa_n == 0:
+        hint = "取込済みです。工程4でデータ中身を確認してください。"
+        hint_step = "data_qa"
+    elif labeled == 0 and actions == 0:
+        hint = "工程5で Label Studio / SALT でラベルを付けるか、E2E 用に cmd_vel 付き bag を入れてください。"
         hint_step = "annotate"
+    elif labeled == 0 and actions > 0 and label_rev_n == 0 and data_qa_n > 0:
+        # E2E path: allow skip annotate; nudge dataset after QA
+        if datasets == 0:
+            hint = "E2E（cmd_vel 教師）なら工程5–6をスキップしてデータセットを切れます。"
+            hint_step = "dataset"
+        elif runs == 0:
+            hint = "データセットがあります。学習を回してください。"
+            hint_step = "train"
+        elif passed == 0:
+            hint = "学習済みです。ゲートで評価・署名してください。"
+            hint_step = "gate"
+        elif light_n == 0 and packages == 0:
+            hint = "合格モデルがあります。工程10で軽量化するか、工程11で梱包・同期してください。"
+            hint_step = "lighten"
+        elif acked == 0:
+            hint = "パッケージを作り UGV へ同期してください。"
+            hint_step = "package_sync"
+        else:
+            hint = "閉ループが一巡しています。新しいミッションを inbox に足すと次の版が切れます。"
+            hint_step = "package_sync"
+    elif labeled > 0 and label_rev_n == 0:
+        hint = "ラベルがあります。工程6で Xtreme1 突き合わせ確認をしてください。"
+        hint_step = "label_review"
     elif datasets == 0:
-        hint = "ラベル済みです。データセットの版を切ってください。"
+        hint = "確認済みです。データセットの版を切ってください。"
         hint_step = "dataset"
     elif runs == 0:
         hint = "データセットがあります。学習を回してください。"
@@ -339,15 +451,15 @@ def pipeline() -> dict:
     elif passed == 0:
         hint = "学習済みです。ゲートで評価・署名してください。"
         hint_step = "gate"
-    elif packages == 0:
-        hint = "合格モデルがあります。車載パッケージを作ってください。"
-        hint_step = "package"
+    elif light_n == 0 and packages == 0:
+        hint = "合格モデルがあります。工程10で軽量化するか、既に小さければ工程11へ。"
+        hint_step = "lighten"
     elif acked == 0:
-        hint = "パッケージがあります。UGV 向け同期を開始してください。"
-        hint_step = "sync"
+        hint = "梱包して UGV へ同期してください（工程11）。"
+        hint_step = "package_sync"
     else:
         hint = "閉ループが一巡しています。新しいミッションを inbox に足すと次の版が切れます。"
-        hint_step = "sync"
+        hint_step = "package_sync"
     if issues_open > 0:
         hint = f"未解決の課題が {issues_open} 件あります。ポータルの「課題」タブでモデルに紐づけて追跡してください。"
 
@@ -361,6 +473,7 @@ def pipeline() -> dict:
         "hint": hint,
         "hint_step": hint_step,
         "steps": steps,
+        "phases": ["取得", "教師", "学習", "配備"],
         "totals": {
             "missions": missions,
             "samples": samples,
@@ -371,6 +484,11 @@ def pipeline() -> dict:
             "packages": packages,
             "acked": acked,
             "issues_open": issues_open,
+            "data_qa": data_qa_n,
+            "label_review": label_rev_n,
+            "light_models": light_n,
+            "sim_acks": sim_acks,
+            "actions": actions,
         },
         "latest_job": dict(latest_job) if latest_job else None,
         "latest_model": dict(latest_model) if latest_model else None,
@@ -860,7 +978,7 @@ def flow_options() -> dict:
         models = conn.execute(
             text(
                 """
-                SELECT model_id, name, version, stage, status, created_at
+                SELECT model_id, name, version, stage, status, artifact_kind, created_at
                 FROM model_version
                 WHERE status IN ('staging', 'canary', 'production')
                 ORDER BY created_at DESC
@@ -879,6 +997,7 @@ def flow_options() -> dict:
             )
         ).mappings().all()
     from ugv_mlops.annotate_io import ANNOTATE_TOOLS
+    from ugv_mlops.stages import allowed_artifacts, load_policy
 
     n_class = int(label_types.get("class") or 0)
     n_bbox = int(label_types.get("bbox") or 0)
@@ -890,6 +1009,14 @@ def flow_options() -> dict:
         suggested_task = "e2e"
     else:
         suggested_task = "obstacle_cls"
+    policy = load_policy()
+    stage_policy = {
+        st: {
+            "allowed_artifacts": sorted(allowed_artifacts(st, policy)),
+            "max_bytes": int((policy.get("stages") or {}).get(st, {}).get("max_bytes") or 0),
+        }
+        for st in ("S1", "S2", "S3", "S4")
+    }
     return jsonable_encoder(
         {
             "inbox": inbox,
@@ -901,6 +1028,7 @@ def flow_options() -> dict:
             "label_types": label_types,
             "actions": actions,
             "suggested_task": suggested_task,
+            "stage_policy": stage_policy,
             "annotate_tools": [
                 {"id": tid, **spec} for tid, spec in ANNOTATE_TOOLS.items()
             ],
@@ -1000,6 +1128,68 @@ def annotate_import(req: AnnotateImportReq) -> dict:
 def annotate_import_jsonl(req: AnnotateJsonlReq) -> dict:
     JOBS_ENQUEUED.labels("annotate_import_jsonl").inc()
     return {"job_id": enqueue("annotate_import_jsonl", req.model_dump())}
+
+
+@app.get("/carla/status")
+def carla_status() -> dict:
+    from ugv_mlops.carla_bridge import status
+
+    return jsonable_encoder(status())
+
+
+@app.get("/carla/bags")
+def carla_bags() -> dict:
+    from ugv_mlops.carla_bridge import list_bags
+
+    return jsonable_encoder(list_bags())
+
+
+@app.get("/carla/record-hint")
+def carla_record_hint(out_name: str = "mine_001") -> dict:
+    from ugv_mlops.carla_bridge import record_command_hint
+
+    return jsonable_encoder(record_command_hint(out_name))
+
+
+@app.post("/carla/import")
+def carla_import(req: CarlaImportReq) -> dict:
+    JOBS_ENQUEUED.labels("carla_import").inc()
+    return {"job_id": enqueue("carla_import", req.model_dump())}
+
+
+@app.post("/pipeline/sim-generate")
+def pipeline_sim_generate(req: SimGenerateAckReq) -> dict:
+    action = (req.action or "ack").strip().lower()
+    if action == "import":
+        if not req.source:
+            raise HTTPException(400, "action=import には source（bag パス）が必要です")
+        JOBS_ENQUEUED.labels("carla_import").inc()
+        return {
+            "job_id": enqueue(
+                "carla_import",
+                {"source": req.source, "mission_id": req.mission_id, "note": req.note},
+            )
+        }
+    JOBS_ENQUEUED.labels("sim_generate_ack").inc()
+    return {"job_id": enqueue("sim_generate_ack", req.model_dump())}
+
+
+@app.post("/data-qa")
+def data_qa(req: DataQaReq) -> dict:
+    JOBS_ENQUEUED.labels("data_qa").inc()
+    return {"job_id": enqueue("data_qa", req.model_dump())}
+
+
+@app.post("/label-review")
+def label_review(req: LabelReviewReq) -> dict:
+    JOBS_ENQUEUED.labels("label_review").inc()
+    return {"job_id": enqueue("label_review", req.model_dump())}
+
+
+@app.post("/models/export")
+def models_export(req: LightenReq) -> dict:
+    JOBS_ENQUEUED.labels("lighten").inc()
+    return {"job_id": enqueue("lighten", req.model_dump())}
 
 
 @app.post("/ingest")

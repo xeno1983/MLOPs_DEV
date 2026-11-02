@@ -1,6 +1,6 @@
 # Windows 新規環境の構築手順
 
-1 台の Windows PC に、本スタック（bag 取込 → アノテ → データセット → MLflow）をゼロから載せる手順です。載せたあとの日常操作は [usage.md](usage.md)、ID / パスワードは [usage.md の一覧](usage.md#画面の場所と初期-id--パスワード)、閉鎖網への再搬入は [airgap.md](airgap.md)。
+1 台の Windows PC に、本スタック（**11 工程**: シミュ／inbox → 取込確認 → アノテ → 学習 → ゲート → 軽量化 → 車載同期）をゼロから載せる手順です。載せたあとの日常操作は [usage.md](usage.md)、工程定義は [pipeline-stages.md](pipeline-stages.md)、画面つき PPT は [procedure/UGV_MLOps_データ取込からデプロイ手順.pptx](procedure/UGV_MLOps_データ取込からデプロイ手順.pptx)、ID / パスワードは [usage.md の一覧](usage.md#画面の場所と初期-id--パスワード)、閉鎖網への再搬入は [airgap.md](airgap.md)。
 
 ---
 
@@ -288,4 +288,4 @@ DB と Garage の中身まで消すのは `docker compose down -v`（取り消�
 | SALT の窓がすぐ閉じる | WSL `Ubuntu-24.04`、conda 環境 `SALT`、`DISPLAY`。ランチャーは別窓を残す |
 | Garage にファイルが無い | ingest の path はコンテナから見て `/data/inbox/...`。旧 MinIO ボリュームは自動移行しない |
 
-日常のフローは [usage.md](usage.md)、層の対応は [workflow.md](workflow.md) です。
+日常のフローは [usage.md](usage.md)（11 工程）、層の対応は [workflow.md](workflow.md)、工程カードの定義は [pipeline-stages.md](pipeline-stages.md) です。操作 PPT を作り直すときは `python scripts/build-procedure-pptx.py`。

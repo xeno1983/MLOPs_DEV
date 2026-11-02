@@ -66,6 +66,10 @@ gates:
     max_mae_steer: 0.45
     max_mae_speed: 2.0
     min_map50: 0.05
+    # autoe2e（軌道 ADE/FDE）: 親に勝ち、定速度ベースライン以下であること。絶対値は任務に合わせて
+    # max_ade_6p4s_m / max_fde_6p4s_m を足す。
+    require_improved_over_parent: true
+    max_ade_vs_cv_ratio: 1.0
     require_signature: false
     require_holdout: true
     allowed_mission_modes: [training, maintenance, exercise, operation]
@@ -75,6 +79,8 @@ gates:
     max_mae_steer: 0.25
     max_mae_speed: 1.0
     min_map50: 0.20
+    require_improved_over_parent: true
+    max_ade_vs_cv_ratio: 0.8
     require_signature: true
     require_holdout: true
     allowed_mission_modes: [training, maintenance]
@@ -87,6 +93,9 @@ tasks:
   detection:
     classes: [person, vehicle, obstacle, animal, unknown]
     primary_metric: map50
+  autoe2e:
+    primary_metric: ade_6p4s_m
+    artifact: full_weights   # S3/S4 のみ。GPU ホストワーカーで学習（docs/autoe2e.md）
   e2e:
     primary_metric: mae_steer
     max_mae_steer: 0.40

@@ -118,13 +118,12 @@ def init_session(mission_id: str, kind: str = "camera", limit: int = 200, tool: 
     camera_ids = [str(row["sample_id"]) for row in rows if str(row["modality"]).startswith("camera")]
     ls_result = None
     if tool == "labelstudio" and camera_ids:
-        try:
-            from ugv_mlops.integrations import push_samples_to_labelstudio
+        from ugv_mlops.integrations import push_samples_to_labelstudio
 
-            ls_result = push_samples_to_labelstudio(camera_ids)
-            ls_result["ok"] = True
-        except Exception as exc:
-            ls_result = {"ok": False, "error": str(exc), "pushed": 0}
+        ls_result = push_samples_to_labelstudio(camera_ids)
+        ls_result["ok"] = True
+    elif tool == "labelstudio" and not camera_ids:
+        raise RuntimeError("Label Studio 向けのカメラサンプルがありません。先に取込・データ確認をしてください。")
 
     for row in rows:
         bucket, key = parse_s3_uri(row["object_uri"])

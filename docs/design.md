@@ -1,6 +1,6 @@
 # UGV オンプレ MLOps 設計書
 
-本書は、このリポジトリが **何を・どの順で・どのツールに渡すか** を固定する。四脚 PJ との層対応と日常の順は [workflow.md](workflow.md)、使い方は [usage.md](usage.md)、新規 Windows 構築は [setup-windows.md](setup-windows.md)、フォルダ契約は [dataset.md](dataset.md)、起動・閉鎖網は [airgap.md](airgap.md)。
+本書は、このリポジトリが **何を・どの順で・どのツールに渡すか** を固定する。四脚 PJ との層対応と日常の順は [workflow.md](workflow.md)、**11 工程の定義**は [pipeline-stages.md](pipeline-stages.md)、使い方は [usage.md](usage.md)、新規 Windows 構築は [setup-windows.md](setup-windows.md)、フォルダ契約は [dataset.md](dataset.md)、起動・閉鎖網は [airgap.md](airgap.md)。
 
 ---
 
@@ -167,33 +167,36 @@ mission_id
 | `lakefs` | LakeFS のブロックストア | LakeFS |
 | `dvc` | DVC キャッシュ（ポインタは Git の `*.dvc`） | ingest / dataset の区切り |
 
-### 5.3 入力から車載までの一本線
+### 5.3 入力から車載までの一本線（11 工程）
 
-**枠の名前がツール。** 矢印のラベルが Catalog の API。Gitea / Grafana / Redis はこの線に入らない（同じホストにいるだけ。§6）。
+詳細な定義・スキップ規則は [pipeline-stages.md](pipeline-stages.md)。**枠の名前がツール。** 矢印のラベルが Catalog の API。Gitea / Grafana / Redis / CARLA / TensorRT はこの線の compose 外（同じホストにいるだけ、または車載側）。
 
 機密区分が `UNCLASSIFIED` でないサンプルは、`declassified = true` になるまでデータセットに入らない。
 
 ```mermaid
 flowchart TB
   subgraph host["ホストディスク"]
+    SIM["CARLA / Autoware_e2e compose外"]
     BAG["ROS2 bag / 画像 / COCO128 / series"]
-    INBOX["data/inbox/&lt;mission&gt;"]
+    INBOX["data/inbox/mission"]
+    SIM --> INBOX
     BAG --> INBOX
   end
 
   subgraph ui["ポータル nginx :8080"]
-    PORTAL["人が見る画面・デモボタン"]
+    PORTAL["11工程・データ確認・デモ"]
   end
 
   subgraph ctl["Catalog FastAPI :8000"]
-    API["POST /ingest /datasets/build /train /gate /packages /sync"]
+    API["ingest data-qa annotate label-review datasets train gate export packages sync"]
   end
 
   subgraph wrk["Worker"]
     ING["ingest"]
     BLD["build_dataset"]
     TR["train"]
-    GATE["gate + Ed25519 署名"]
+    GATE["gate + Ed25519"]
+    EXP["lighten ONNX"]
     PKG["package"]
     SYNC["sync chunk"]
   end
@@ -204,6 +207,7 @@ flowchart TB
     RUN["training_run"]
     MV["model_version"]
     ST["sync_transaction"]
+    AUD["audit_log QA / review"]
   end
 
   subgraph s3["Garage S3 :9000"]
@@ -215,31 +219,25 @@ flowchart TB
   end
 
   subgraph ls["Label Studio :8081"]
-    LSIM["人手ラベル UGV-obstacle-cls"]
+    LSIM["人手ラベル"]
   end
 
   subgraph mf["MLflow :5000"]
     MFRUN["実験 run / 指標"]
   end
 
-  subgraph lake["LakeFS :8001"]
-    LREPO["ugv-datasets 任意。401 でも学習は続く"]
-  end
-
-  PORTAL -->|ブラウザは /api を転送| API
+  PORTAL -->|browser_/api| API
   INBOX --> API
-  API -->|job queued| ING
+  API -->|job| ING
   ING --> RAW
   ING --> LSAMP
-  ING -->|カメラ最大400件 import| LSIM
-  LSIM -->|dataset 構築前に export| ANN
-  INBOX -->|labels.jsonl でも可| ANN
-  LSAMP --> ANN
+  API -->|data-qa / label-review| AUD
+  ING -->|camera_import| LSIM
+  LSIM -->|export| ANN
   API -->|job| BLD
-  ANN -->|obstacle_cls / detection| BLD
-  LSAMP -->|e2e 時刻同期| BLD
+  ANN --> BLD
+  LSAMP -->|e2e| BLD
   BLD --> DSET
-  DSET -.->|commit 試行| LREPO
   API -->|job| TR
   DSET --> TR
   TR --> MFRUN
@@ -248,40 +246,48 @@ flowchart TB
   TR --> RUN
   API -->|job| GATE
   RUN --> GATE
-  GATE -->|不合格 / 合格| MV
+  GATE --> MV
+  API -->|job| EXP
+  MV --> EXP
+  EXP --> MOD
+  EXP --> MV
   API -->|job| PKG
-  MV -->|対象段 S3| PKG
+  MV --> PKG
   PKG --> PKGS
   API --> SYNC
   PKGS --> SYNC
   SYNC --> ST
-  ST --> UGV["UGV エッジ"]
+  ST --> UGV["UGV。TensorRTは車載側"]
 ```
 
-段とツールの対応（上から車載まで）:
+段とツールの対応（11 工程）:
 
 | 段 | 人が触る / API | 実行 | ファイルの置き場 | ID の置き場 |
 |----|----------------|------|------------------|-------------|
-| 置く | ホスト `data/inbox`。ポータル :8080 は案内だけ | — | ディスク | — |
-| 取り込む | Catalog `POST /ingest` :8000 | Worker ingest | Garage `raw` :9000 | Postgres `learning_sample` |
-| ラベル | Label Studio :8081（知覚分類）。または inbox の `labels.jsonl`。検出は COCO、E2E は cmd_vel で人手不要 | Worker が import / export | 画像は Garage `raw`。Catalog が `:8000/samples/{id}/file` で中継 | Postgres `annotation` |
-| データセット | Catalog `POST /datasets/build` | Worker build_dataset | Garage `datasets`。任意で LakeFS :8001 へ commit | Postgres `dataset_version` |
-| 学習 | Catalog `POST /train`。指標の画面は MLflow :5000 | Worker train | Garage `models`。MLflow 成果物は Garage `mlflow` | Postgres `training_run` ＝ MLflow `run_id` |
-| ゲート | Catalog `POST /gate` | Worker（閾値は Catalog。MLflow は見ない） | — | Postgres `model_version` |
-| 梱包 | Catalog `POST /packages` | Worker package | Garage `packages` | Postgres `update_package` |
-| 車載へ | Catalog `POST /sync` + chunk | Worker / Catalog sync | パッケージ zip をチャンク送信 | Postgres `sync_transaction` |
+| 1 シミュ | Autoware_e2e / CARLA。`POST /pipeline/sim-generate` | compose 外 + 監査 | ホストで bag 生成 → inbox | `audit_log`（任意で bag 実在検証） |
+| 2 置く | ホスト `data/inbox` | — | ディスク | — |
+| 3 取込 | `POST /ingest` | Worker | Garage `raw` | `learning_sample` |
+| 4 データ確認 | データタブ + `POST /data-qa` | Catalog | — | `audit_log`（不合格はジョブ失敗） |
+| 5 ラベル | Label Studio / SALT / SAM | Worker import/export | Garage `raw` 中継 | `annotation`（LS 失敗はジョブ失敗） |
+| 6 ラベル確認 | Xtreme1 `:8190` + `POST /label-review` | compose 外 UI | `data/annotate` | `audit_log` |
+| 7 データセット | `POST /datasets/build` | Worker | Garage `datasets` | `dataset_version` |
+| 8 学習 | `POST /train` / MLflow | Worker | Garage `models` / `mlflow` | `training_run` |
+| 9 ゲート | `POST /gate` | Worker | — | `model_version`（実サイズ検査） |
+| 10 軽量化 | `POST /models/export` | Worker ONNX/adapter | Garage `models` | 新 `model_version`（失敗は偽成功しない） |
+| 11 梱包・同期 | `POST /packages` + `/sync` + chunk | Catalog | Garage `packages` → `data/work/vehicles/*/inbox` | `update_package` / `sync_transaction` |
 
-ポータル :8080 は nginx が `/api/` を Catalog :8000 に転送するだけで、ファイルも DB も持たない。Garage に MinIO のような Web コンソールはない（S3 は :9000、管理 API は :3903）。Gitea :3000 は学習コードの置き場で、この表のどの段にも自動では出てこない。
+ポータル :8080 は nginx が `/api/` を Catalog :8000 に転送するだけ。Garage に Web コンソールはない。CARLA / TensorRT / SALT / Xtreme1 は本 compose に載せない。
 
 ### 5.4 タスクごとの中身
 
-学習は `dataset.task` で分岐する（`train_from_dataset`）。
+学習は `dataset.task` で分岐する（`train_from_dataset`）。**運用向けの一覧・確認方法・未配線領域**は [tasks.md](tasks.md)。
 
-| タスク | 入力 | 教師 | 成果物 | ゲート指標 | MLflow 実験 |
-|--------|------|------|--------|------------|-------------|
-| `obstacle_cls` | カメラ JPEG | `label_type=class`（clear / obstacle / person） | `model.joblib` | accuracy, FPR | `ugv-obstacle-cls` |
-| `detection` | カメラ JPEG | `label_type=bbox`（COCO 80 クラス可） | `yolox_nano.pth` | map50 | `ugv-yolox` |
-| `e2e` | カメラ + `action` 系列（cmd_vel 等） | 同時刻の steer / speed。人手ラベル不要 | `model.joblib` | mae_steer, mae_speed | `ugv-e2e` |
+| タスク | 入力 | 教師 | 成果物 | ゲート指標 | MLflow 実験 | 実行 |
+|--------|------|------|--------|------------|-------------|------|
+| `obstacle_cls` | カメラ JPEG | `label_type=class`（clear / obstacle / person） | `model.joblib` | accuracy, FPR | `ugv-obstacle-cls` | Docker worker |
+| `detection` | カメラ JPEG | `label_type=bbox`（COCO 80 クラス可） | `yolox_nano.pth` | map50 | `ugv-yolox` | Docker worker |
+| `e2e` | カメラ + `action` 系列（cmd_vel 等） | 同時刻の steer / speed。人手ラベル不要 | `model.joblib` | mae_steer, mae_speed | `ugv-e2e` | Docker worker |
+| `autoe2e` | rosbag2 → scene zip | Autoware 切出し。人手ラベル不要 | `full_weights` | ADE/FDE 系 | AutoE2E 実験 | **ホスト GPU ワーカー** |
 
 ROS2 bag 取込時の展開（ホストに ROS 不要、Python `rosbags`）:
 
@@ -350,7 +356,13 @@ Worker が `ugv_mlops.storage`（minio 互換クライアント）で put/get。
 ingest と dataset 構築の区切りで Worker が `dvc add` / `dvc push -r garage-docker`。実体は Garage `s3://dvc`。ポインタは Git の `*.dvc`。dvc 未導入や push 失敗でも Catalog の学習は続く。ホストから見る remote 名は `garage`（`:9000`）。
 
 **Catalog ↔ SALT / Xtreme1 / SAM**  
-本 compose には載せない。`POST /annotate/init` が Garage のカメラを `data/annotate/<mission>` に出し、Autoware_e2e の SAM / SALT GUI / Xtreme1 `:8190` で付けた結果を `annotate-import-*` で `annotation` に戻す。Label Studio は画像クラスの本線。
+本 compose には載せない。`POST /annotate/init` が Garage のカメラ／点群を `data/annotate/<mission>` に出す。工程5は Label Studio / SALT / SAM、工程6は Xtreme1 `:8190` で突き合わせ確認（`POST /label-review`）。結果は `annotate-import-*` で `annotation` に戻す。
+
+**Catalog ↔ シミュ（CARLA）**  
+本 compose 外。`GET /carla/*` と `POST /carla/import` で Autoware_e2e 配下の bag を `data/inbox` へ載せる（[carla.md](carla.md)）。CarlaUE4 の起動はしない。取込後は実機と同じ ingest 線。
+
+**Catalog ↔ 軽量化**  
+ゲート合格の `model_version` から `POST /models/export` が ONNX（または既存の小さい成果物）を Garage `models` に置き、別 `model_version` を切る。TensorRT エンジン化は車載／Autoware 側。
 
 **Catalog ↔ LakeFS**  
 データセット zip 作成後に `ugv-datasets` の `main` へオブジェクトを置き commit する。LakeFS のインストールキーが compose と合っていないと 401 になり、**データセット自体は Garage `datasets` に残る**（学習は止まない）。DVC が既定の大きい成果物の版。
@@ -463,7 +475,7 @@ model_id（必須） ─ package_id（任意、最新パッケージを自動紐
 
 ## 9. デモが通す経路
 
-ポータルのデモボタンは、同じ 8 工程を **入力だけ変えて** 回す。
+ポータルのデモボタンは、同じ 11 工程パイプラインを **入力だけ変えて** 回す（デモでは工程1・10を省略し、ゲートは `smoke` になり得る）。
 
 | ボタン | 入力 | task | 学習器 |
 |--------|------|------|--------|

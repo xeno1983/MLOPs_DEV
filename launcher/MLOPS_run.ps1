@@ -380,6 +380,41 @@ function Show-Dvc {
     }
 }
 
+function Show-Carla {
+    Write-Host ""
+    Write-Host " CARLA → inbox（compose 外。詳細 docs/carla.md）"
+    Write-Host "  1  状態 GET /carla/status"
+    Write-Host "  2  bag 一覧 GET /carla/bags"
+    Write-Host "  3  inbox へ取込 POST /carla/import"
+    Write-Host "  4  録画コマンドヒント"
+    $pick = Read-Host "番号"
+    switch ($pick) {
+        "1" {
+            try { Write-Host ((Catalog-Get "/carla/status") | ConvertTo-Json -Depth 6) }
+            catch { Write-Host $_ }
+        }
+        "2" {
+            try { Write-Host ((Catalog-Get "/carla/bags") | ConvertTo-Json -Depth 6) }
+            catch { Write-Host $_ }
+        }
+        "3" {
+            $src = Read-Host "source（carla-bags の relpath または絶対パス）"
+            if ([string]::IsNullOrWhiteSpace($src)) { return }
+            $mid = Read-Host "mission_id（空可）"
+            $body = @{ source = $src }
+            if (-not [string]::IsNullOrWhiteSpace($mid)) { $body.mission_id = $mid }
+            $res = Catalog-Post "/carla/import" $body
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) { Wait-Job $res.job_id 120 | Out-Null }
+        }
+        "4" {
+            try { Write-Host ((Catalog-Get "/carla/record-hint") | ConvertTo-Json -Depth 4) }
+            catch { Write-Host $_ }
+        }
+        default { Write-Host "キャンセル" }
+    }
+}
+
 while ($true) {
     Write-Host ""
     Write-Host " UGV MLOps"
@@ -394,6 +429,7 @@ while ($true) {
     Write-Host "  7  拡張起動（LakeFS / Gitea / Grafana）"
     Write-Host "  8  スタック停止（データは残る）"
     Write-Host "  9  終了"
+    Write-Host "  c  CARLA → inbox（bag 一覧 / 取込）"
     Write-Host ""
     $choice = Read-Host "番号"
     try {
@@ -412,7 +448,9 @@ while ($true) {
                 Pause-Menu
             }
             "9" { exit 0 }
-            default { Write-Host "1〜9 を入力してください。" }
+            "c" { Show-Carla; Pause-Menu }
+            "C" { Show-Carla; Pause-Menu }
+            default { Write-Host "1〜9 または c を入力してください。" }
         }
     } catch {
         Write-Host $_

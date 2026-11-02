@@ -86,14 +86,31 @@
     button:disabled { opacity: 0.55; cursor: wait; }
     .flow {
       display: grid;
-      grid-template-columns: repeat(8, minmax(0, 1fr));
-      gap: 8px;
+      grid-template-columns: repeat(11, minmax(0, 1fr));
+      gap: 6px;
     }
-    @media (max-width: 1100px) {
-      .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    @media (max-width: 1400px) {
+      .flow { grid-template-columns: repeat(6, minmax(0, 1fr)); }
     }
-    @media (max-width: 700px) {
+    @media (max-width: 900px) {
+      .flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 600px) {
       .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .phase-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .phase-row span {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #121a21;
     }
     .step {
       background: var(--panel);
@@ -199,7 +216,7 @@
     .dash-now .now-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
     .dash-pipe {
       display: grid;
-      grid-template-columns: repeat(8, minmax(0, 1fr));
+      grid-template-columns: repeat(11, minmax(0, 1fr));
       gap: 6px;
       margin-bottom: 12px;
     }
@@ -414,7 +431,7 @@
     <div class="tabs">
       <button id="tab-dash" class="on" type="button">ダッシュボード</button>
       <button id="tab-data" type="button">データ</button>
-      <button id="tab-flow" type="button">8工程フロー</button>
+      <button id="tab-flow" type="button">11工程フロー</button>
       <button id="tab-iss" type="button">課題</button>
     </div>
     <div class="hint">
@@ -530,6 +547,7 @@
     </div>
 
     <div id="view-flow" class="hidden">
+      <div class="phase-row" id="phase-row"></div>
       <div class="flow" id="flow"></div>
       <section class="detail" id="detail"></section>
       <p class="job" id="job"></p>
@@ -613,14 +631,17 @@
   </div>
   <script>
     const LINKS = {
+      sim_generate: null,
       collect: null,
       ingest: null,
+      data_qa: null,
       annotate: "http://127.0.0.1:8081",
+      label_review: "http://127.0.0.1:8190",
       dataset: null,
       train: "http://127.0.0.1:5000",
       gate: null,
-      package: null,
-      sync: null,
+      lighten: null,
+      package_sync: null,
     };
     const INTEG_NAMES = {
       catalog: "Catalog",
@@ -641,6 +662,7 @@
       obstacle_cls: { id: "ds-obstacle-01", name: "obstacle v1" },
       detection: { id: "ds-detect-01", name: "detection v1" },
       e2e: { id: "ds-e2e-01", name: "e2e v1" },
+      autoe2e: { id: "ds-autoe2e-01", name: "autoe2e v1" },
     };
     const PACKABLE = { staging: 1, canary: 1, production: 1 };
     const ANNOTATE_TOOL_META = {
@@ -775,7 +797,8 @@
       const pipeRes = await fetch("/api/pipeline");
       if (!pipeRes.ok) throw new Error("pipeline " + pipeRes.status);
       data = await pipeRes.json();
-      if (!selected) selected = data.hint_step;
+      const stepIds = (data.steps || []).map((s) => s.id);
+      if (!selected || stepIds.indexOf(selected) < 0) selected = data.hint_step || stepIds[0] || null;
       dash = await loadDashboard(data);
       await loadIssues();
       try {
@@ -1136,16 +1159,18 @@
       (data.steps || []).forEach((s) => {
         const el = document.createElement("div");
         el.className = "step" + (s.id === data.hint_step ? " next" : "");
+        let badge = s.done ? "済" : (s.id === data.hint_step ? "次" : "未");
+        let badgeCls = s.done ? "ok" : (s.id === data.hint_step ? "warn" : "");
+        if (s.optional && !s.done && s.id !== data.hint_step) {
+          badge = "任意";
+          badgeCls = "warn";
+        }
         el.innerHTML =
           '<div class="num">' + s.n + "</div>" +
           "<h2>" + esc(s.title) + "</h2>" +
           '<div class="metric">' + fmt(s.count) + "</div>" +
           '<div class="unit">' + esc(s.unit) + "</div>" +
-          '<span class="badge ' + (s.done ? "ok" : "warn") + '">' + (s.done ? "済" : "次") + "</span>";
-        if (s.id !== data.hint_step && !s.done) {
-          el.querySelector(".badge").textContent = "未";
-          el.querySelector(".badge").className = "badge";
-        }
+          '<span class="badge ' + badgeCls + '">' + badge + "</span>";
         el.onclick = () => { selected = s.id; view = "flow"; render(); };
         pipe.appendChild(el);
       });
@@ -1172,11 +1197,11 @@
 
       const kpis = [
         ["サンプル", k.samples, "", "data", ""],
-        ["ラベル済み", k.labeled, "", "flow", "annotate"],
+        ["データ確認", (data.totals && data.totals.data_qa) || 0, "", "flow", "data_qa"],
         ["データセット", k.datasets, "", "flow", "dataset"],
         ["合格モデル", k.passed, "", "flow", "gate"],
-        ["パッケージ", k.packages, "", "flow", "package"],
-        ["同期完了", k.sync_acked, "", "flow", "sync"],
+        ["軽量モデル", (data.totals && data.totals.light_models) || 0, "", "flow", "lighten"],
+        ["同期完了", k.sync_acked, "", "flow", "package_sync"],
         ["未解決課題", openIssues, openIssues > 0 ? "bad" : "", "issues", ""],
         ["失敗ジョブ", k.jobs_failed, k.jobs_failed > 0 ? "bad" : "", "more", "jobs"],
       ];
@@ -1209,7 +1234,7 @@
         alerts.push({ cls: "bad", title: "未解決の課題 " + openIssues, body: "デプロイ済みモデルの課題タブで追跡できます。", go: "issues" });
       }
       if (k.sync_pending > 0) {
-        alerts.push({ cls: "warn", title: "同期待ち " + k.sync_pending, body: "リンクが開いているあいだに chunk を送ってください。", go: "flow", step: "sync" });
+        alerts.push({ cls: "warn", title: "同期待ち " + k.sync_pending, body: "リンクが開いているあいだに chunk を送ってください。", go: "flow", step: "package_sync" });
       }
       if (k.rejected > 0) {
         alerts.push({ cls: "warn", title: "却下モデル " + k.rejected, body: "ゲート理由をジョブ結果で確認してください。", go: "more" });
@@ -1597,7 +1622,24 @@
         ? '　<a class="ext" href="' + link + '" target="_blank" rel="noreferrer">関連ツールを開く</a>'
         : "";
       let form = "";
-      if (s.id === "collect") {
+      if (s.id === "sim_generate") {
+        form =
+          '<div class="form-grid">' +
+          "<p>CARLA は本 compose 外（Autoware_e2e）。録った rosbag2 を inbox へ取り込みます。</p>" +
+          '<p id="act-carla-status" class="muted">CARLA / Autoware 状態を読み込み中…</p>' +
+          "<label>Autoware 配下の CARLA bag</label>" +
+          '<select id="act-carla-bag"><option value="">読み込み中…</option></select>' +
+          "<label>inbox ミッション名（任意）</label>" +
+          '<input id="act-carla-mid" placeholder="空なら M-CARLA-&lt;bag名&gt;" />' +
+          '<button type="button" id="act-carla-import">CARLA bag を inbox へ取り込む</button>' +
+          "<label>すでに inbox にあるミッション（確認のみ）</label>" +
+          '<select id="act-inbox"><option value="">読み込み中…</option></select>' +
+          '<button type="button" id="act-go">inbox の bag を確認した</button>' +
+          '<button type="button" class="secondary" id="act-carla-hint">録画コマンドを表示</button>' +
+          '<button type="button" class="secondary" id="act-next">工程2（置く）へ / スキップ</button>' +
+          '<pre id="act-carla-cmd" class="muted" style="white-space:pre-wrap;font-size:12px"></pre>' +
+          "</div>";
+      } else if (s.id === "collect") {
         form =
           '<div class="form-grid">' +
           "<label>inbox のミッション（ホストの <code>data\\inbox\\&lt;mission_id&gt;</code>）</label>" +
@@ -1621,6 +1663,15 @@
           "</select>" +
           '<button type="button" id="act-go">取込を実行</button>' +
           "</div>";
+      } else if (s.id === "data_qa") {
+        form =
+          '<div class="form-grid">' +
+          "<label>ミッション</label>" +
+          '<select id="act-mission"><option value="">読み込み中…</option></select>' +
+          "<p class=\"muted\">データタブでカメラ・cmd_vel・LiDAR も確認できます。</p>" +
+          '<button type="button" id="act-go">取込内容を確認して合格</button>' +
+          '<button type="button" class="secondary" id="act-open-data">データタブを開く</button>' +
+          "</div>";
       } else if (s.id === "annotate") {
         form =
           '<div class="form-grid">' +
@@ -1630,7 +1681,6 @@
           '<select id="act-tool">' +
           '<option value="labelstudio">Label Studio（画像クラス / bbox）</option>' +
           '<option value="salt">SALT（LiDAR 点群）</option>' +
-          '<option value="xtreme1">Xtreme1（カメラと点群の確認）</option>' +
           "</select>" +
           "<label>対象</label>" +
           '<select id="act-kind">' +
@@ -1639,12 +1689,22 @@
           '<option value="lidar">lidar</option>' +
           '<option value="both">camera + lidar</option>' +
           "</select>" +
-          '<p id="act-tool-help" class="muted">画像クラスは Label Studio。点群は SALT。突き合わせ確認は Xtreme1。</p>' +
-          '<button type="button" id="act-go">Label Studio に投入</button>' +
-          "<label>結果 jsonl（SALT / Xtreme1 から戻す）</label>" +
+          '<p id="act-tool-help" class="muted">突き合わせ確認は工程6（Xtreme1）。E2E はスキップ可。</p>' +
+          '<button type="button" id="act-go">作業データを出す</button>' +
+          "<label>結果 jsonl（SALT から戻す）</label>" +
           '<input id="act-jsonl" placeholder="data/annotate/M-AVBAG-001/export.jsonl" />' +
           '<button type="button" class="secondary" id="act-import">結果を Catalog に戻す</button>' +
-          '<button type="button" class="secondary" id="act-next">E2E / ラベル済みならデータセットへ</button>' +
+          '<button type="button" class="secondary" id="act-next">E2E ならデータセットへ / 次は確認へ</button>' +
+          "</div>";
+      } else if (s.id === "label_review") {
+        form =
+          '<div class="form-grid">' +
+          "<label>ミッション</label>" +
+          '<select id="act-mission"><option value="">読み込み中…</option></select>' +
+          "<p>Xtreme1 でカメラと点群を突き合わせます（Freespace マスクには使いません）。</p>" +
+          '<button type="button" id="act-dump">確認用データを出す</button>' +
+          '<button type="button" id="act-go">確認完了として記録</button>' +
+          '<button type="button" class="secondary" id="act-next">データセットへ</button>' +
           "</div>";
       } else if (s.id === "dataset") {
         form =
@@ -1658,7 +1718,10 @@
           '<option value="obstacle_cls">obstacle_cls（知覚）</option>' +
           '<option value="e2e">e2e</option>' +
           '<option value="detection">detection</option>' +
+          '<option value="autoe2e">autoe2e（AutoE2E 微調整。GPU ホストワーカー）</option>' +
           "</select>" +
+          "<label>ミッション（任意。autoe2e は必須。知覚でも絞り込み可）</label>" +
+          '<input id="act-dsmission" placeholder="M-..." />' +
           '<button type="button" id="act-go">データセットを生成</button>' +
           "</div>";
       } else if (s.id === "train") {
@@ -1682,30 +1745,46 @@
           '<select id="act-gate">' +
           '<option value="staging">staging</option>' +
           '<option value="production">production</option>' +
+          '<option value="smoke">smoke（公開デモ・短クリップ）</option>' +
           "</select>" +
           '<button type="button" id="act-go">ゲートを実行</button>' +
           "</div>";
-      } else if (s.id === "package") {
+      } else if (s.id === "lighten") {
         form =
           '<div class="form-grid">' +
-          "<label>モデル</label>" +
+          "<label>合格モデル</label>" +
           '<select id="act-model"><option value="">読み込み中…</option></select>' +
+          "<label>対象段</label>" +
+          '<select id="act-stage">' +
+          '<option value="S3">S3（onnx 可）</option>' +
+          '<option value="S1">S1（車載・adapter 等のみ）</option>' +
+          '<option value="S4">S4</option>' +
+          "</select>" +
+          "<label>出力種別</label>" +
+          '<select id="act-light-kind">' +
+          '<option value="onnx">onnx</option>' +
+          '<option value="adapter">adapter（S1 向け）</option>' +
+          '<option value="distilled_student">distilled_student（S2 向け再登録）</option>' +
+          "</select>" +
+          '<p id="act-light-help" class="muted">S1 では onnx 不可。失敗時はジョブが failed になります（偽の軽量成果物は作りません）。</p>' +
+          '<button type="button" id="act-go">軽量化を実行</button>' +
+          '<button type="button" class="secondary" id="act-next">既に小さいなら梱包へ</button>' +
+          "</div>";
+      } else if (s.id === "package_sync") {
+        form =
+          '<div class="form-grid">' +
           "<label>対象段階</label>" +
           '<select id="act-stage">' +
           '<option value="S3">S3</option>' +
-          '<option value="S1">S1（車載）</option>' +
+          '<option value="S1">S1（車載・小さい成果物のみ）</option>' +
           '<option value="S4">S4</option>' +
           "</select>" +
-          '<button type="button" id="act-go">パッケージを作る</button>' +
-          "</div>";
-      } else if (s.id === "sync") {
-        form =
-          '<div class="form-grid">' +
-          "<label>パッケージ</label>" +
-          '<select id="act-pkg"><option value="">読み込み中…</option></select>' +
+          "<label>モデル（段の許可 kind のみ表示）</label>" +
+          '<select id="act-model"><option value="">読み込み中…</option></select>' +
           "<label>車両 ID</label>" +
           '<input id="act-vid" value="UGV-01" />' +
-          '<button type="button" id="act-go">同期を実行</button>' +
+          '<p class="muted">同期先はホストの <code>data\\work\\vehicles\\&lt;車両&gt;\\inbox\\</code>（実ファイル書き込み）。</p>' +
+          '<button type="button" id="act-go">梱包して同期</button>' +
           "</div>";
       }
       return (
@@ -1742,6 +1821,59 @@
           inboxList.length ? "選んでください" : "inbox は空です。data\\inbox にコピーしてください"
         );
       }
+      if (s.id === "sim_generate") {
+        const stEl = document.getElementById("act-carla-status");
+        const bagSel = document.getElementById("act-carla-bag");
+        fetch("/api/carla/status").then((r) => r.ok ? r.json() : null).then((st) => {
+          if (!stEl || gen !== formGen) return;
+          if (!st) { stEl.textContent = "CARLA API に届きません（Catalog 起動を確認）"; return; }
+          stEl.textContent = st.ok
+            ? ("Autoware: " + st.autoware_e2e_root + " ／ 発見 bag " + (st.bag_count || 0) + " ／ mining_sim " + (st.mining_sim ? "あり" : "なし"))
+            : ("Autoware_e2e 未検出: " + (st.autoware_e2e_root || "") + "（.env の AUTOWARE_E2E_ROOT）");
+        }).catch(() => { if (stEl) stEl.textContent = "CARLA 状態の取得に失敗"; });
+        fetch("/api/carla/bags").then((r) => r.ok ? r.json() : { bags: [] }).then((bj) => {
+          if (!bagSel || gen !== formGen) return;
+          const bags = bj.bags || [];
+          bagSel.innerHTML = optList(
+            bags,
+            "relpath",
+            (it) => it.relpath + "（" + Math.round((it.size_bytes || 0) / 1024) + " KB）",
+            bags.length ? "選んでください" : "datasets/carla_bags 等に bag がありません"
+          );
+        }).catch(() => {});
+        const hintBtn = document.getElementById("act-carla-hint");
+        if (hintBtn) {
+          hintBtn.onclick = async () => {
+            try {
+              const h = await fetch("/api/carla/record-hint").then((r) => r.json());
+              const pre = document.getElementById("act-carla-cmd");
+              if (pre) pre.textContent = (h.command || "") + "\n\n" + (h.note || "");
+            } catch (e) {
+              document.getElementById("hint").textContent = e.message;
+            }
+          };
+        }
+        const carlaImp = document.getElementById("act-carla-import");
+        if (carlaImp) {
+          carlaImp.onclick = async () => {
+            const src = (bagSel && bagSel.value) || "";
+            if (!src) {
+              document.getElementById("hint").textContent = "CARLA bag を選んでください";
+              return;
+            }
+            const mid = ((document.getElementById("act-carla-mid") || {}).value || "").trim();
+            const idle = carlaImp.textContent;
+            try {
+              await runCatalog("/carla/import", {
+                source: src,
+                mission_id: mid || null,
+                note: "portal carla import",
+              }, "CARLA取込", carlaImp, idle, 120, "sim_generate");
+              await load();
+            } catch (_) {}
+          };
+        }
+      }
       const missionSel = document.getElementById("act-mission");
       if (missionSel) {
         const list = opts.missions || [];
@@ -1773,15 +1905,51 @@
         );
       }
       const modelSel = document.getElementById("act-model");
-      if (modelSel) {
-        const list = (opts.models || []).filter((m) => PACKABLE[m.status]);
+      const stageSel = document.getElementById("act-stage");
+      const lightKind = document.getElementById("act-light-kind");
+      function fillModels() {
+        if (!modelSel) return;
+        let list = (opts.models || []).filter((m) => PACKABLE[m.status]);
+        const stage = stageSel ? stageSel.value : "";
+        const policy = (opts.stage_policy || {})[stage];
+        if (policy && policy.allowed_artifacts && (s.id === "package_sync" || s.id === "lighten")) {
+          const allow = {};
+          (policy.allowed_artifacts || []).forEach((k) => { allow[k] = 1; });
+          if (s.id === "package_sync") {
+            list = list.filter((m) => allow[m.artifact_kind]);
+          }
+        }
         modelSel.innerHTML = optList(
           list,
           "model_id",
-          (it) => (it.name || "") + " " + (it.version || "") + " / " + (it.status || "") + " / " + it.model_id,
-          list.length ? "選んでください" : "ゲートに合格したモデルがありません"
+          (it) => (it.name || "") + " " + (it.version || "") + " / " + (it.artifact_kind || "?") + " / " + (it.status || "") + " / " + it.model_id,
+          list.length ? "選んでください" : (s.id === "package_sync" ? "この段に適合するモデルがありません（工程10で軽量化）" : "ゲートに合格したモデルがありません")
         );
       }
+      function syncLightKind() {
+        if (!lightKind || !stageSel) return;
+        const stage = stageSel.value;
+        const policy = (opts.stage_policy || {})[stage] || {};
+        const allow = policy.allowed_artifacts || [];
+        [...lightKind.options].forEach((o) => {
+          o.disabled = allow.length > 0 && allow.indexOf(o.value) < 0;
+        });
+        if (lightKind.selectedOptions[0] && lightKind.selectedOptions[0].disabled) {
+          const first = [...lightKind.options].find((o) => !o.disabled);
+          if (first) lightKind.value = first.value;
+        }
+        if (stage === "S1" && allow.indexOf("adapter") >= 0) lightKind.value = "adapter";
+        const help = document.getElementById("act-light-help");
+        if (help) help.textContent = stage + " 許可: " + (allow.join(", ") || "—");
+      }
+      fillModels();
+      if (stageSel) {
+        stageSel.onchange = () => {
+          fillModels();
+          syncLightKind();
+        };
+      }
+      syncLightKind();
       const pkgSel = document.getElementById("act-pkg");
       if (pkgSel) {
         const list = opts.packages || [];
@@ -1810,6 +1978,7 @@
       applyPrefill("act-inbox", lastResult.mission_id);
       applyPrefill("act-mid", lastResult.mission_id);
       applyPrefill("act-mission", lastResult.mission_id);
+      applyPrefill("act-dsmission", lastResult.mission_id);
       const toolSel = document.getElementById("act-tool");
       const kindSel = document.getElementById("act-kind");
       const jsonlIn = document.getElementById("act-jsonl");
@@ -1856,16 +2025,49 @@
       const nextBtn = document.getElementById("act-next");
       if (nextBtn) {
         nextBtn.onclick = () => {
-          if (s.id === "collect") selected = "ingest";
-          else if (s.id === "annotate") selected = "dataset";
+          if (s.id === "sim_generate") selected = "collect";
+          else if (s.id === "collect") selected = "ingest";
+          else if (s.id === "annotate") selected = "label_review";
+          else if (s.id === "label_review") selected = "dataset";
+          else if (s.id === "lighten") selected = "package_sync";
           view = "flow";
           render();
+        };
+      }
+      const openData = document.getElementById("act-open-data");
+      if (openData) openData.onclick = () => { view = "data"; render(); };
+      const dumpBtn = document.getElementById("act-dump");
+      if (dumpBtn) {
+        dumpBtn.onclick = async () => {
+          const missionId = document.getElementById("act-mission").value;
+          if (!missionId) {
+            document.getElementById("hint").textContent = "ミッションを選んでください";
+            return;
+          }
+          const idle = dumpBtn.textContent;
+          try {
+            await runCatalog("/annotate/init", { mission_id: missionId, kind: "both", tool: "xtreme1" }, "確認用ダンプ", dumpBtn, idle, 90, "label_review");
+            window.open("http://127.0.0.1:8190", "_blank", "noopener");
+          } catch (_) {}
         };
       }
 
       go.onclick = async () => {
         const idle = go.textContent;
         try {
+          if (s.id === "sim_generate") {
+            const mid = ((document.getElementById("act-inbox") || {}).value || "").trim();
+            await runCatalog(
+              "/pipeline/sim-generate",
+              { action: "ack", note: "operator ack", mission_id: mid || null },
+              "シミュ確認",
+              go,
+              idle,
+              30,
+              "sim_generate"
+            );
+            return;
+          }
           if (s.id === "collect") {
             await load();
             selected = "collect";
@@ -1879,6 +2081,13 @@
             if (!folder) throw new Error("inbox のフォルダを選ぶか、名前を入力してください");
             lastResult.mission_id = folder;
             await runCatalog("/ingest", { path: "/data/inbox/" + folder, source_type: document.getElementById("act-source").value }, "取込", go, idle, 90, "ingest");
+            return;
+          }
+          if (s.id === "data_qa") {
+            const missionId = document.getElementById("act-mission").value;
+            if (!missionId) throw new Error("ミッションを選んでください");
+            lastResult.mission_id = missionId;
+            await runCatalog("/data-qa", { mission_id: missionId, confirm: true }, "データ確認", go, idle, 60, "data_qa");
             return;
           }
           if (s.id === "annotate") {
@@ -1895,14 +2104,25 @@
             if (meta && meta.url) window.open(meta.url, "_blank", "noopener");
             return;
           }
+          if (s.id === "label_review") {
+            const missionId = document.getElementById("act-mission").value;
+            if (!missionId) throw new Error("ミッションを選んでください");
+            lastResult.mission_id = missionId;
+            await runCatalog("/label-review", { mission_id: missionId, confirm: true }, "ラベル確認", go, idle, 60, "label_review");
+            return;
+          }
           if (s.id === "dataset") {
             const datasetId = document.getElementById("act-dsid").value.trim();
             if (!datasetId) throw new Error("データセット ID を入れてください");
+            const task = document.getElementById("act-task").value;
+            const dsMission = document.getElementById("act-dsmission").value.trim();
+            if (task === "autoe2e" && !dsMission) throw new Error("autoe2e はミッション ID が必要です");
             await runCatalog("/datasets/build", {
               dataset_id: datasetId,
               name: document.getElementById("act-name").value.trim() || datasetId,
-              task: document.getElementById("act-task").value,
-            }, "データセット生成", go, idle, 90, "dataset");
+              task: task,
+              mission_id: dsMission || null,
+            }, "データセット生成", go, idle, task === "autoe2e" ? 600 : 90, "dataset");
             return;
           }
           if (s.id === "train") {
@@ -1915,35 +2135,61 @@
             const runId = document.getElementById("act-run").value;
             if (!runId) throw new Error("学習 run を選んでください");
             const gateName = document.getElementById("act-gate").value;
-            await runCatalog("/gate", { run_id: runId, gate_name: gateName, target_status: gateName, mission_mode: "training" }, "ゲート", go, idle, 90, "gate");
+            // smoke は閾値のみ緩め、合格後の status は staging（梱包可能）にする
+            const targetStatus = gateName === "smoke" ? "staging" : gateName;
+            await runCatalog("/gate", {
+              run_id: runId,
+              gate_name: gateName,
+              target_status: targetStatus,
+              mission_mode: "training",
+            }, "ゲート", go, idle, 90, "gate");
             return;
           }
-          if (s.id === "package") {
+          if (s.id === "lighten") {
             const modelId = document.getElementById("act-model").value;
             if (!modelId) throw new Error("モデルを選んでください");
-            await runCatalog("/packages", { model_id: modelId, target_stage: document.getElementById("act-stage").value }, "パッケージ", go, idle, 90, "package");
+            await runCatalog("/models/export", {
+              model_id: modelId,
+              kind: document.getElementById("act-light-kind").value,
+              target_stage: document.getElementById("act-stage").value,
+            }, "軽量化", go, idle, 180, "lighten");
             return;
           }
-          if (s.id === "sync") {
-            const pkg = document.getElementById("act-pkg").value;
-            const vid = document.getElementById("act-vid").value.trim();
-            if (!pkg) throw new Error("パッケージを選んでください");
-            if (!vid) throw new Error("車両 ID を入れてください");
+          if (s.id === "package_sync") {
+            const modelId = document.getElementById("act-model").value;
+            const vid = (document.getElementById("act-vid").value || "").trim() || "UGV-01";
+            if (!modelId) throw new Error("モデルを選んでください");
+            const pkgJob = await runCatalog("/packages", {
+              model_id: modelId,
+              target_stage: document.getElementById("act-stage").value,
+            }, "パッケージ", go, idle, 90, "package_sync");
+            let packageId = lastResult.package_id;
+            if (pkgJob && pkgJob.result_json) {
+              const rj = typeof pkgJob.result_json === "string" ? JSON.parse(pkgJob.result_json) : pkgJob.result_json;
+              if (rj && rj.package_id) packageId = rj.package_id;
+            }
+            if (!packageId) throw new Error("パッケージ ID が取れませんでした");
             go.disabled = true;
-            go.textContent = "実行中…";
-            const started = await postJson("/sync", { package_id: pkg, vehicle_id: vid });
+            go.textContent = "同期中…";
+            const started = await postJson("/sync", { package_id: packageId, vehicle_id: vid });
             rememberResult(started);
             const tx = started.tx_id;
             document.getElementById("job").textContent = "同期 " + tx + " を送信中…";
             let last = started;
             for (let i = 0; i < 200; i++) {
               last = await postJson("/sync/" + encodeURIComponent(tx) + "/chunk", {});
-              document.getElementById("job").textContent = "同期 " + tx + ": " + last.status + " " + (last.bytes_sent || 0) + "/" + (last.size_bytes || 0);
+              document.getElementById("job").textContent =
+                "同期 " + tx + ": " + last.status + " " + (last.bytes_sent || 0) + "/" + (last.size_bytes || 0);
               document.getElementById("hint").textContent = document.getElementById("job").textContent;
               if (last.done) break;
             }
             rememberResult(last);
-            await finishStep("sync", { status: last.done ? "completed" : "running", result_json: last });
+            if (last.delivery_path) {
+              document.getElementById("hint").textContent =
+                "同期完了: " + last.delivery_path + "（車両 inbox）";
+            }
+            await finishStep("package_sync", { status: last.done ? "completed" : "running", result_json: last });
+            return;
           }
         } catch (e) {
           document.getElementById("hint").textContent = e.message;
@@ -1956,17 +2202,31 @@
     }
 
     function renderFlow() {
+      const phases = data.phases || ["取得", "教師", "学習", "配備"];
+      const phaseRow = document.getElementById("phase-row");
+      if (phaseRow) {
+        phaseRow.innerHTML = phases.map((p) => {
+          const n = (data.steps || []).filter((s) => s.phase === p).length;
+          return "<span>" + esc(p) + "（" + n + "）</span>";
+        }).join("");
+      }
       const flow = document.getElementById("flow");
       flow.innerHTML = "";
       data.steps.forEach((s) => {
         const el = document.createElement("div");
         el.className = "step" + (s.id === selected ? " active" : "") + (s.id === data.hint_step ? " next" : "");
+        let badge = s.done ? "データあり" : "未実施";
+        let badgeCls = s.done ? "ok" : "";
+        if (s.optional && !s.done) {
+          badge = "任意";
+          badgeCls = "warn";
+        }
         el.innerHTML =
-          '<div class="num">工程 ' + s.n + "</div>" +
-          "<h2>" + s.title + "</h2>" +
+          '<div class="num">工程 ' + s.n + (s.phase ? " · " + esc(s.phase) : "") + "</div>" +
+          "<h2>" + esc(s.title) + "</h2>" +
           '<div class="metric">' + s.count + "</div>" +
-          '<div class="unit">' + s.unit + "</div>" +
-          '<span class="badge ' + (s.done ? "ok" : "") + '">' + (s.done ? "データあり" : "未実施") + "</span>";
+          '<div class="unit">' + esc(s.unit) + "</div>" +
+          '<span class="badge ' + badgeCls + '">' + badge + "</span>";
         el.onclick = () => { selected = s.id; render(); };
         flow.appendChild(el);
       });

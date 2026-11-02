@@ -2,7 +2,7 @@
 
 四脚 PJ（Go2 Pick-and-Carry / `PAI_Task`）で整えた層を、こちらのツールに写した一連の流れです。フォルダ契約は [dataset.md](dataset.md)、起動は [usage.md](usage.md)、ツール内部の配線は [design.md](design.md)。
 
-四脚は **シミュ学習 → 最良重みを倉庫へ → 実機 OTA**（観測・行動・報酬はシミュが毎回出す。人手ラベルは無い）。自動運転は **帰還 bag → 人手アノテーション → データセット → 学習 → ゲート通過分だけ車載へ**。ingest しただけでは教師にならない。
+四脚は **シミュ学習 → 最良重みを倉庫へ → 実機 OTA**（観測・行動・報酬はシミュが毎回出す。人手ラベルは無い）。自動運転は **（任意）シミュ bag → 帰還／inbox → 取込確認 → 人手アノテ → ラベル確認 → データセット → 学習 → ゲート → 軽量化 → 車載同期**。ingest しただけでは教師にならない。工程の定義は [pipeline-stages.md](pipeline-stages.md)。
 
 ---
 
@@ -11,11 +11,14 @@
 | 層 | 四脚 PJ | 自動運転（本リポジトリ） | 役割 |
 |----|---------|--------------------------|------|
 | コード | GitHub | この Git。任意で Gitea `:3000` | 学習コード・ポリシー。ホットパスに載せない |
+| **シミュ生成** | Genesis が毎 step 観測・報酬 | **工程1。** Autoware_e2e / CARLA（compose 外）→ `data/inbox` | 教師付き走行ログを bag で落とす。Catalog は到着後だけ知る |
 | 実験ノート | MLflow（`logs/mlflow`） | MLflow `:5000`。成果物は Garage `mlflow` | パラメータ・指標。**学習のたびに書く** |
 | 大きい成果物の版 | DVC ポインタ + MinIO `pai-dvc` | **DVC ポインタ + Garage `s3://dvc`**。学習が参照する ID は Catalog `dataset_version` | Git に zip/重みを置かない。ingest / 版切りの区切りでだけ `dvc push` |
 | 研究用倉庫 | MinIO | Garage（S3）`raw` / `datasets` / `models` / `mlflow` / `dvc` | PC 間・再開用の実体 |
-| 現場への配達 | Mender（`best.pt` → `.mender`） | `POST /gate` → `/packages` → `/sync` | 合格したものだけ。失敗時ロールバック |
-| **アノテーション** | なし（シミュが教師を出す） | **必須。** Label Studio クラス/bbox、SAM Freespace、SALT 点群、Xtreme1 確認 | 詳細は [annotation.md](annotation.md) |
+| **データ／ラベル確認** | 推論 mp4・メニュー確認 | **工程4** データタブ / `data-qa`。**工程6** Xtreme1 | 空 bag・トピック欠損・ラベルずれを版切り前に止める |
+| **軽量化** | （実機向けに小さい `best.pt`） | **工程10** `POST /models/export`（ONNX 等）。TensorRT は車載側 | S1 サイズ制限と推論形式に合わせる |
+| 現場への配達 | Mender（`best.pt` → `.mender`） | `POST /gate` → export → `/packages` → `/sync` → chunk。配送先 `data/work/vehicles/<車両>/inbox/` | 合格・軽量化したものだけ。sha256 検証・失敗時ロールバック |
+| **アノテーション** | なし（シミュが教師を出す） | **工程5 必須（知覚）。** Label Studio / SAM / SALT。確認は工程6 Xtreme1 | 詳細は [annotation.md](annotation.md) |
 | 人が見る入口 | 起動メニュー 9 | ポータル http://127.0.0.1:8080 | 状態確認とジョブ投入。ID/パスワードは [usage.md](usage.md#画面の場所と初期-id--パスワード) |
 
 四脚の `dvc_sync publish --select best` に相当するのが **ゲート**。metrics のピーク近い重みを人手で抜く代わりに、Catalog が閾値を見て `model_version` を切る。
@@ -29,34 +32,28 @@
 学習ホットパスでは倉庫へ毎ファイルを push しない（四脚が毎 iteration `dvc push` しないのと同じ）。
 
 ```text
-帰還 / 物理媒体
-    → data/inbox/<mission>/     ROS2 bag・画像・series/*.jsonl
+（任意）CARLA / Autoware_e2e     工程1
+帰還 / 物理媒体 / 公開サンプル
+    → data/inbox/<mission>/     工程2
               │
-              ├─ POST /ingest          毎回ミッションごと（まだ教師なし）
-              │     Garage raw + Postgres learning_sample
-              │     カメラ URL を Label Studio へ import
+              ├─ POST /ingest          工程3（まだ教師なし）
+              │     Garage raw + learning_sample + DVC 区切り
               │
-              ├─ ★ 人手アノテーション   知覚の必須。ここで初めて教師が付く
-              │     画像クラス/bbox = Label Studio :8081
-              │     Freespace = SAM（Autoware tools/annotate.py）→ import-masks
-              │     LiDAR = SALT GUI → import-jsonl
-              │     確認 = Xtreme1 :8190（箱検出。マスクには使わない）
-              │     未ラベルのまま datasets/build しない
-              │     取込→追跡→パース→保管（DVC GUI と同じ）。parsed は cameras / lidar.bin / localization
-              │     DVC が Garage s3://dvc へ（失敗しても ingest は成功）
+              ├─ POST /data-qa         工程4（カメラ・action・トピック確認）
               │
-              ├─ POST /datasets/build  区切り（ラベル済みだけ版を切る）
-              │     Garage datasets + dataset_version_id
+              ├─ ★ 人手アノテ          工程5（知覚の必須。E2E はスキップ）
+              │     Label Studio / SAM / SALT
               │
-              ├─ POST /train           実験のたび
-              │     ├─ MLflow metrics（毎回）
-              │     └─ Garage models（成果物）
+              ├─ POST /label-review    工程6（Xtreme1 突き合わせ）
               │
-              └─ POST /gate            区切り（車載に出してよいか）
-                    └─ 合格だけ package → sync → UGV
+              ├─ POST /datasets/build  工程7
+              ├─ POST /train           工程8（MLflow）
+              ├─ POST /gate            工程9
+              ├─ POST /models/export   工程10（ONNX 等。既に軽ければスキップ可）
+              └─ packages → sync       工程11 → data/work/vehicles/*/inbox（TensorRT は車載）
 ```
 
-中核（既定の `docker compose up -d`）は **inbox → ingest → アノテーション → データセット → train / MLflow** まで。梱包と同期は四脚の Mender 段。LakeFS / Gitea / Grafana は `--profile full`。
+中核（既定の `docker compose up -d`）は **inbox → ingest → 確認 → アノテ → データセット → train / MLflow → ゲート → 軽量化 → 梱包同期**。LakeFS / Gitea / Grafana は `--profile full`。CARLA は載せない。
 
 ```mermaid
 flowchart LR

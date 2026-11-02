@@ -24,7 +24,7 @@ from ugv_mlops.storage import parse_s3_uri
 CLASSES = ("clear", "obstacle", "person")
 
 
-def train_from_dataset(dataset_version_id: str, stage: str | None = None) -> dict:
+def train_from_dataset(dataset_version_id: str, stage: str | None = None, params: dict | None = None) -> dict:
     with connect() as conn:
         row = conn.execute(
             text(
@@ -41,6 +41,10 @@ def train_from_dataset(dataset_version_id: str, stage: str | None = None) -> dic
         from ugv_mlops.e2e import train_e2e
 
         return train_e2e(dataset_version_id, stage)
+    if row["task"] in {"autoe2e", "auto_e2e", "autoe2e_finetune"}:
+        from ugv_mlops.autoe2e import train_autoe2e
+
+        return train_autoe2e(dataset_version_id, stage, params)
     if row["task"] in {"detection", "yolox", "yolox_nano"}:
         from ugv_mlops.yolox_train import train_yolox
 

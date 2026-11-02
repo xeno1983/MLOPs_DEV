@@ -37,6 +37,10 @@ def build_dataset(
         from ugv_mlops.e2e import build_e2e_dataset
 
         return build_e2e_dataset(dataset_id, name, train_ratio, val_ratio, mission_id=mission_id)
+    if task in {"autoe2e", "auto_e2e", "autoe2e_finetune"}:
+        from ugv_mlops.autoe2e import build_autoe2e_dataset
+
+        return build_autoe2e_dataset(dataset_id, name, mission_id=mission_id)
     if task in {"detection", "yolox", "yolox_nano"}:
         from ugv_mlops.detect_dataset import build_detection_dataset
 
@@ -55,20 +59,30 @@ def build_dataset(
     work.mkdir(parents=True, exist_ok=True)
 
     with connect() as conn:
+        params: dict = {}
+        mission_filter = ""
+        if mission_id:
+            mission_filter = " AND s.mission_id = :mid"
+            params["mid"] = mission_id
         rows = conn.execute(
             text(
-                """
+                f"""
                 SELECT s.sample_id, s.object_uri, s.modality, a.label_json
                 FROM learning_sample s
                 JOIN annotation a ON a.sample_id = s.sample_id
                 WHERE a.label_type = 'class'
                   AND (s.declassified = TRUE OR s.classification = 'UNCLASSIFIED')
+                  {mission_filter}
                 ORDER BY s.sample_id
                 """
-            )
+            ),
+            params,
         ).mappings().all()
         if not rows:
-            raise RuntimeError("no labeled unclassified samples available")
+            raise RuntimeError(
+                "no labeled unclassified samples available"
+                + (f" for mission {mission_id}" if mission_id else "")
+            )
 
         conn.execute(
             text(
