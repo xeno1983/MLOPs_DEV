@@ -359,7 +359,7 @@ ingest と dataset 構築の区切りで Worker が `dvc add` / `dvc push -r gar
 本 compose には載せない。`POST /annotate/init` が Garage のカメラ／点群を `data/annotate/<mission>` に出す。工程5は Label Studio / SALT / SAM、工程6は Xtreme1 `:8190` で突き合わせ確認（`POST /label-review`）。結果は `annotate-import-*` で `annotation` に戻す。
 
 **Catalog ↔ シミュ（CARLA）**  
-本 compose 外。`GET /carla/*` と `POST /carla/import` で Autoware_e2e 配下の bag を `data/inbox` へ載せる（[carla.md](carla.md)）。CarlaUE4 の起動はしない。取込後は実機と同じ ingest 線。
+本 compose 外。`POST /carla/launch|stop`（host job）と `GET /carla/*` / `POST /carla/import` で起動・状態・bag 取込を行う（[carla.md](carla.md)）。CarlaUE4 自体は compose に載せない。取込後は実機と同じ ingest 線。テスト層は [ci-cd-testing.md](ci-cd-testing.md)。
 
 **Catalog ↔ 軽量化**  
 ゲート合格の `model_version` から `POST /models/export` が ONNX（または既存の小さい成果物）を Garage `models` に置き、別 `model_version` を切る。TensorRT エンジン化は車載／Autoware 側。

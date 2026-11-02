@@ -1,8 +1,8 @@
 # CARLA 連動（compose 外）
 
-本スタックは **CARLA を docker-compose に載せない**。Autoware_e2e 側で走行を録り、rosbag2 を `data/inbox/<mission>/` に載せた時点から Catalog の管轄になる（実機帰還と同じ入口）。
+本スタックは **CARLA を docker-compose に載せない**。起動・走行はホスト／WSL の Autoware_e2e + CarlaUE4、Catalog は **起動指示・状態・bag 取込** を担う。
 
-工程定義は [pipeline-stages.md](pipeline-stages.md) 工程1。学習タスクは [tasks.md](tasks.md)。
+工程定義は [pipeline-stages.md](pipeline-stages.md) 工程1。学習タスクは [tasks.md](tasks.md)。CI 観点は [ci-cd-testing.md](ci-cd-testing.md)。
 
 ---
 
@@ -10,20 +10,22 @@
 
 | 項目 | 内容 |
 |------|------|
-| Autoware_e2e | `.env` の `AUTOWARE_E2E_ROOT`（compose では `/autoware_e2e` にマウント） |
-| CARLA | ホスト / WSL で `CarlaUE4`（本リポジトリ外） |
-| 録り方 | 同マシンの `Autoware_e2e/OFFROAD_CARLA_HYBRID.md` |
+| Autoware_e2e | `.env` の `AUTOWARE_E2E_ROOT` |
+| CARLA | `.env` の `CARLA_ROOT`（CarlaUE4.sh / .exe） |
+| 起動モード | `CARLA_LAUNCH_MODE=wsl`（既定）/ `native` / `script` |
+| host worker | ポータルから起動するとき必須（`launcher/MLOPS_gpu_worker.bat`） |
 
 ---
 
 ## 流れ
 
 ```text
-CARLA + mining_sim.py
+ポータル / CLI / ランチャー
+    → POST /carla/launch（host job）または scripts/carla-launch.ps1
+    → CarlaUE4 + mining_sim.py
     → ros2 bag record → Autoware_e2e/datasets/carla_bags/<run>/
-    → POST /carla/import（またはポータル工程1）
-    → data/inbox/M-CARLA-.../
-    → POST /ingest → data-qa →（E2E なら）dataset/train …
+    → POST /carla/import → data/inbox/M-CARLA-.../
+    → POST /ingest → data-qa → …
 ```
 
 ---
@@ -32,48 +34,50 @@ CARLA + mining_sim.py
 
 | 方法 | パス | 内容 |
 |------|------|------|
-| GET | `/carla/status` | Autoware ルート・mining_sim・bag 件数 |
-| GET | `/carla/bags` | `datasets/carla_bags` 等の bag 一覧 |
-| GET | `/carla/record-hint` | `ros2 bag record` のコピペ |
-| POST | `/carla/import` | `{source, mission_id?, note?}` → inbox へコピー＋監査 |
-| POST | `/pipeline/sim-generate` | `action=import` でも同じ取込。`action=ack` は確認のみ |
+| GET | `/carla/status` | Autoware・CARLA_ROOT・TCP probe・runtime |
+| GET | `/carla/bags` | bag 一覧 |
+| GET | `/carla/record-hint` | `ros2 bag record` コピペ |
+| POST | `/carla/launch` | `{components, dry_run?, wait_ready_sec?}` → **host job** |
+| POST | `/carla/stop` | 停止（host job） |
+| POST | `/carla/import` | bag → inbox |
+| POST | `/pipeline/sim-generate` | `import` / `ack` |
 
-`source` は Autoware ルートからの相対パス（`list_bags` の `relpath`）か、許可ディレクトリ内の絶対パス。
+`components`: `server`（CarlaUE4）/ `mining_sim` / 両方（`stack`）。
+
+Catalog がコンテナ内のとき起動は **必ず host worker**。ホスト上 CLI は直接起動可。
 
 ---
 
-## CLI / ランチャー
+## CLI / スクリプト / ランチャー
 
 ```powershell
 $env:PYTHONPATH="src"
+$env:CARLA_ROOT="C:\path\to\CARLA"   # または WSL 内パスを CARLA_ROOT に
 python -m ugv_mlops.cli carla-status
-python -m ugv_mlops.cli carla-bags
-python -m ugv_mlops.cli carla-import "datasets/carla_bags/mine_001" --mission-id M-CARLA-mine-001
+python -m ugv_mlops.cli carla-launch --component server --wait-ready-sec 40
+python -m ugv_mlops.cli carla-launch --component mining_sim
+python -m ugv_mlops.cli carla-launch --component stack --dry-run
+python -m ugv_mlops.cli carla-stop --component stack
+python -m ugv_mlops.cli carla-import "datasets/carla_bags/mine_001"
+
+.\scripts\carla-launch.ps1 -Component stack
 ```
 
-ランチャー `MLOPS_run.bat` の **c** … CARLA bag 一覧と inbox 取込。
+ランチャー `c` メニュー: 状態・取込・起動・停止・ローカルスクリプト。
 
 ---
 
-## ポータル
+## ポータル（工程1）
 
-工程1「シミュでデータを作る」:
+1. **CARLA 起動** / **mining_sim** / **一括**（host worker 要）  
+2. 録画（ヒントボタン）→ bag を選んで **inbox へ取込**  
+3. **確認**（mission 必須）→ 工程3 ingest  
 
-1. Autoware 配下の bag を選ぶ  
-2. 「CARLA bag を inbox へ取り込む」  
-3. 工程3 で ingest  
-
-「録画コマンドを表示」で WSL 用 `ros2 bag record` を出す。
-
----
-
-## E2E 向けヒント
-
-可能なら bag に操舵・速度系トピック（`cmd_vel` / ackermann 等）を含める。無い場合は inbox に `series/action.jsonl` を足す。知覚分類・検出は工程5で人手ラベルが必要。
+TCP `:2000` の応答有無を状態行に表示する。
 
 ---
 
 ## やらないこと
 
 - CARLA / Genesis を本 `docker-compose.yml` に追加する  
-- Catalog から CarlaUE4 を起動する（手順案内と bag 取込のみ）
+- Catalog コンテナ内から直接 `CarlaUE4` を `Popen` する（host へ委譲）

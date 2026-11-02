@@ -110,7 +110,7 @@ flowchart LR
 
 | 区間 | 連動 | 備考 |
 |------|------|------|
-| CARLA → inbox | `GET /carla/bags` → `POST /carla/import` で inbox へコピー | 詳細は [carla.md](carla.md)。compose に CARLA を載せない |
+| CARLA 起動 → inbox | `POST /carla/launch`（host）→ bags → `POST /carla/import` | 詳細は [carla.md](carla.md)。compose に CARLA を載せない |
 | ingest → data_qa | preview 検査。不合格はジョブ失敗 | 知覚はカメラ必須。E2E は action/cmd_vel |
 | annotate → label_review | Xtreme1 は確認専用工程 | Freespace マスクには使わない |
 | gate → lighten | 合格モデルから ONNX/adapter を別 `model_version` に登録 | 段ホワイトリストは `artifact_policy.yaml`。S1+onnx は拒否 |
@@ -122,7 +122,7 @@ flowchart LR
 
 詳細は [carla.md](carla.md)。
 
-1. Autoware_e2e で CARLA + `mining_sim.py` を起動し、rosbag2 を録る（`OFFROAD_CARLA_HYBRID.md`）。出力例: `datasets/carla_bags/<run>/`。
+1. ポータル／CLI／ランチャーで CARLA + `mining_sim` を起動（`POST /carla/launch` → host worker。[carla.md](carla.md)）。rosbag2 を録る。出力例: `datasets/carla_bags/<run>/`。
 2. ポータル工程1で bag を選び「CARLA bag を inbox へ取り込む」（`POST /carla/import`）。または手動で `data/inbox/<mission>/` にコピー。
 3. 「inbox の bag を確認した」で監査。実機のみなら工程1スキップして工程2へ。
 4. 工程3 ingest 以降は実機帰還と同じ取込線。

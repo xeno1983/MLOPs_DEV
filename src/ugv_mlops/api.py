@@ -132,6 +132,18 @@ class CarlaImportReq(BaseModel):
     note: str = ""
 
 
+class CarlaLaunchReq(BaseModel):
+    components: list[str] | None = None  # server | mining_sim | stack
+    dry_run: bool = False
+    wait_ready_sec: float = 0
+    sync: bool = False  # True かつホスト上なら job せず直接起動（開発用）
+
+
+class CarlaStopReq(BaseModel):
+    components: list[str] | None = None
+    sync: bool = False
+
+
 class LightenReq(BaseModel):
     model_id: str
     kind: str = "onnx"
@@ -1149,6 +1161,43 @@ def carla_record_hint(out_name: str = "mine_001") -> dict:
     from ugv_mlops.carla_bridge import record_command_hint
 
     return jsonable_encoder(record_command_hint(out_name))
+
+
+@app.post("/carla/launch")
+def carla_launch(req: CarlaLaunchReq) -> dict:
+    """CARLA server / mining_sim を起動（compose 外・既定は host job）。"""
+    from ugv_mlops.carla_launch import in_container, launch
+
+    payload = {
+        "components": req.components or ["server"],
+        "dry_run": req.dry_run,
+        "wait_ready_sec": req.wait_ready_sec,
+    }
+    if req.sync and not in_container():
+        return jsonable_encoder(launch(**payload))
+    if req.dry_run and not in_container():
+        return jsonable_encoder(launch(**payload))
+    JOBS_ENQUEUED.labels("carla_launch").inc()
+    return {
+        "job_id": enqueue("carla_launch", payload),
+        "runner": "host",
+        "hint": "host worker（MLOPS_gpu_worker.bat）が必要。または CLI: ugv-mlops carla-launch",
+    }
+
+
+@app.post("/carla/stop")
+def carla_stop(req: CarlaStopReq) -> dict:
+    from ugv_mlops.carla_launch import in_container, stop
+
+    payload = {"components": req.components}
+    if req.sync and not in_container():
+        return jsonable_encoder(stop(req.components))
+    JOBS_ENQUEUED.labels("carla_stop").inc()
+    return {
+        "job_id": enqueue("carla_stop", payload),
+        "runner": "host",
+        "hint": "host worker が carla_stop を実行します",
+    }
 
 
 @app.post("/carla/import")

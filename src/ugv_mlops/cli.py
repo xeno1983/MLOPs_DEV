@@ -306,6 +306,36 @@ def carla_bags_cmd() -> None:
     typer.echo(json.dumps(list_bags(), indent=2, default=str, ensure_ascii=False))
 
 
+@app.command("carla-launch")
+def carla_launch_cmd(
+    component: str = typer.Option("server", help="server | mining_sim | stack"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    wait_ready_sec: float = typer.Option(0, help="server 起動後に TCP 待ち秒"),
+) -> None:
+    """ホスト上で CARLA / mining_sim を起動（compose 外）。"""
+    from ugv_mlops.carla_launch import launch
+
+    comps = ["server", "mining_sim"] if component in {"stack", "all", "both"} else [component]
+    typer.echo(
+        json.dumps(
+            launch(comps, dry_run=dry_run, wait_ready_sec=wait_ready_sec),
+            indent=2,
+            default=str,
+            ensure_ascii=False,
+        )
+    )
+
+
+@app.command("carla-stop")
+def carla_stop_cmd(
+    component: str = typer.Option("stack", help="server | mining_sim | stack"),
+) -> None:
+    from ugv_mlops.carla_launch import stop
+
+    comps = None if component in {"stack", "all", "both"} else [component]
+    typer.echo(json.dumps(stop(comps), indent=2, default=str, ensure_ascii=False))
+
+
 @app.command("carla-import")
 def carla_import_cmd(source: str, mission_id: str = "", note: str = "") -> None:
     from ugv_mlops.carla_bridge import import_bag_to_inbox

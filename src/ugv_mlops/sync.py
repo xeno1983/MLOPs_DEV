@@ -35,15 +35,21 @@ def enqueue_sync(package_id: str, vehicle_id: str) -> dict:
         ).mappings().first()
         if not pkg:
             raise FileNotFoundError(f"package not found: {package_id}")
+        if not (pkg.get("object_uri") or "").strip():
+            raise RuntimeError(f"package {package_id} has no object_uri")
+        expected_sha = (pkg.get("sha256") or "").strip()
+        if not expected_sha:
+            raise RuntimeError(f"package {package_id} has no sha256 (refuse sync)")
         bucket, key = parse_s3_uri(pkg["object_uri"])
         data = get_bytes(bucket, key)
         expected = int(pkg["size_bytes"] or 0)
-        if expected and len(data) != expected:
+        if expected <= 0:
+            raise RuntimeError(f"package {package_id} size_bytes missing or 0")
+        if len(data) != expected:
             raise RuntimeError(f"package size mismatch: storage={len(data)} db={expected}")
-        if pkg["sha256"]:
-            digest = hashlib.sha256(data).hexdigest()
-            if digest != pkg["sha256"]:
-                raise RuntimeError(f"package sha256 mismatch: got={digest} expected={pkg['sha256']}")
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != expected_sha:
+            raise RuntimeError(f"package sha256 mismatch: got={digest} expected={expected_sha}")
 
         stage = _staging_dir(tx_id)
         src = stage / "package.zip"
@@ -120,8 +126,9 @@ def send_chunk(tx_id: str, max_bytes: int = 65536) -> dict:
             if final.exists():
                 final.unlink()
             dest.replace(final)
+            expected_sha = (pkg.get("sha256") or "").strip()
             got = hashlib.sha256(final.read_bytes()).hexdigest()
-            if pkg["sha256"] and got != pkg["sha256"]:
+            if not expected_sha or got != expected_sha:
                 conn.execute(
                     text(
                         """
@@ -132,8 +139,16 @@ def send_chunk(tx_id: str, max_bytes: int = 65536) -> dict:
                     ),
                     {"sent": new_offset, "off": new_offset, "id": tx_id},
                 )
-                audit(conn, "sync.integrity_failed", "sync_transaction", tx_id, {"got": got, "expected": pkg["sha256"]})
-                raise RuntimeError(f"delivery integrity failed: {got} != {pkg['sha256']}")
+                audit(
+                    conn,
+                    "sync.integrity_failed",
+                    "sync_transaction",
+                    tx_id,
+                    {"got": got, "expected": expected_sha or None},
+                )
+                raise RuntimeError(
+                    f"delivery integrity failed: got={got} expected={expected_sha or '(missing)'}"
+                )
             delivery_path = str(final)
             # cleanup staging
             try:

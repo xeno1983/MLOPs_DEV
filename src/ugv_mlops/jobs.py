@@ -14,7 +14,9 @@ AUTOE2E_TASKS = {"autoe2e", "auto_e2e", "autoe2e_finetune"}
 
 
 def runner_for(kind: str, payload: dict) -> str:
-    """どのワーカーが実行するか。AutoE2E は GPU とホストのファイルが要るので host、他は docker。"""
+    """どのワーカーが実行するか。AutoE2E / CARLA 起動はホスト、他は docker。"""
+    if kind in {"carla_launch", "carla_stop"}:
+        return "host"
     if kind == "build_dataset" and payload.get("task") in AUTOE2E_TASKS:
         return "host"
     if kind == "train" and payload.get("dataset_version_id"):
@@ -233,6 +235,18 @@ def _dispatch(kind: str, payload: dict) -> dict:
             mission_id=payload.get("mission_id"),
             note=payload.get("note") or "",
         )
+    if kind == "carla_launch":
+        from ugv_mlops.carla_launch import launch
+
+        return launch(
+            payload.get("components") or ["server"],
+            dry_run=bool(payload.get("dry_run")),
+            wait_ready_sec=float(payload.get("wait_ready_sec") or 0),
+        )
+    if kind == "carla_stop":
+        from ugv_mlops.carla_launch import stop
+
+        return stop(payload.get("components"))
     if kind == "lighten":
         from ugv_mlops.lighten import export_model
 

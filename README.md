@@ -2,7 +2,7 @@
 
 帰還データと物理媒体を前提に、**データセット構築 → 学習 → 評価ゲート／署名 → 車載への差分配送** を、インターネット無しで回すための環境です。既存の UAIS 学習DB（層3）と、多段階学習（S0〜S4）に合わせています。
 
-一連の流れ（四脚 PJ の Git / MLflow / DVC / MinIO / Mender との対応）は [docs/workflow.md](docs/workflow.md)。**11 工程（シミュ・確認・軽量化含む）**は [docs/pipeline-stages.md](docs/pipeline-stages.md)。**いま学習できるタスク**（obstacle_cls / detection / e2e / autoe2e）は [docs/tasks.md](docs/tasks.md)。**CARLA 連動**（bag→inbox）は [docs/carla.md](docs/carla.md)。**アノテーションは必須**（Label Studio / SALT / Xtreme1 / SAM）[docs/annotation.md](docs/annotation.md)。手順の本体は [docs/usage.md](docs/usage.md)。画面つき操作 PPT は [docs/procedure/UGV_MLOps_データ取込からデプロイ手順.pptx](docs/procedure/UGV_MLOps_データ取込からデプロイ手順.pptx)。**新しい Windows PC への構築**は [docs/setup-windows.md](docs/setup-windows.md)。**構造・データフロー・ツール連携**は [docs/design.md](docs/design.md)。閉鎖網への搬入は [docs/airgap.md](docs/airgap.md)。
+一連の流れ（四脚 PJ の Git / MLflow / DVC / MinIO / Mender との対応）は [docs/workflow.md](docs/workflow.md)。**11 工程（シミュ・確認・軽量化含む）**は [docs/pipeline-stages.md](docs/pipeline-stages.md)。**いま学習できるタスク**（obstacle_cls / detection / e2e / autoe2e）は [docs/tasks.md](docs/tasks.md)。**CARLA 連動**（起動・bag→inbox）は [docs/carla.md](docs/carla.md)。**CI/CD・テスト自動化設計**は [docs/ci-cd-testing.md](docs/ci-cd-testing.md)。**アノテーションは必須**（Label Studio / SALT / Xtreme1 / SAM）[docs/annotation.md](docs/annotation.md)。手順の本体は [docs/usage.md](docs/usage.md)。画面つき操作 PPT は [docs/procedure/UGV_MLOps_データ取込からデプロイ手順.pptx](docs/procedure/UGV_MLOps_データ取込からデプロイ手順.pptx)。**新しい Windows PC への構築**は [docs/setup-windows.md](docs/setup-windows.md)。**構造・データフロー・ツール連携**は [docs/design.md](docs/design.md)。閉鎖網への搬入は [docs/airgap.md](docs/airgap.md)。
 
 ## 完全にオフラインか
 

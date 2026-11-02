@@ -382,11 +382,15 @@ function Show-Dvc {
 
 function Show-Carla {
     Write-Host ""
-    Write-Host " CARLA → inbox（compose 外。詳細 docs/carla.md）"
+    Write-Host " CARLA（compose 外。起動は host / WSL。詳細 docs/carla.md）"
     Write-Host "  1  状態 GET /carla/status"
     Write-Host "  2  bag 一覧 GET /carla/bags"
     Write-Host "  3  inbox へ取込 POST /carla/import"
     Write-Host "  4  録画コマンドヒント"
+    Write-Host "  5  CARLA 起動（host job / ローカルスクリプト）"
+    Write-Host "  6  mining_sim 起動"
+    Write-Host "  7  停止"
+    Write-Host "  8  ローカル直接起動 scripts/carla-launch.ps1"
     $pick = Read-Host "番号"
     switch ($pick) {
         "1" {
@@ -410,6 +414,27 @@ function Show-Carla {
         "4" {
             try { Write-Host ((Catalog-Get "/carla/record-hint") | ConvertTo-Json -Depth 4) }
             catch { Write-Host $_ }
+        }
+        "5" {
+            $res = Catalog-Post "/carla/launch" @{ components = @("server"); wait_ready_sec = 45 }
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) {
+                Write-Host "host worker が必要です（MLOPS_gpu_worker.bat）。ジョブ待ち…"
+                Wait-Job $res.job_id 180 | Out-Null
+            }
+        }
+        "6" {
+            $res = Catalog-Post "/carla/launch" @{ components = @("mining_sim") }
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) { Wait-Job $res.job_id 120 | Out-Null }
+        }
+        "7" {
+            $res = Catalog-Post "/carla/stop" @{ components = @("server", "mining_sim") }
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) { Wait-Job $res.job_id 60 | Out-Null }
+        }
+        "8" {
+            & (Join-Path $Root "scripts\carla-launch.ps1") -Component stack
         }
         default { Write-Host "キャンセル" }
     }

@@ -140,39 +140,38 @@ def run_label_review(mission_id: str, confirm: bool = True, note: str = "") -> d
 
 
 def ack_sim_generate(note: str = "", mission_id: str | None = None) -> dict:
-    """Operator acknowledges external CARLA / Autoware sim run; bags go to inbox.
+    """Operator acknowledges a sim bag already in inbox.
 
-    If mission_id is given, require a bag-like layout under data/inbox/<mission_id>/.
+    mission_id is required; bag-like layout under data/inbox/<mission_id>/ must exist.
+    Skip path (実機のみ) is the portal 「工程2へ」button — do not call this without a mission.
     """
+    if not (mission_id or "").strip():
+        raise ValueError(
+            "mission_id が必要です。CARLA 取込後の inbox ミッションを選ぶか、"
+            "実機のみなら工程1をスキップして工程2へ進んでください。"
+        )
     inbox = settings.inbox_path
-    proof: dict = {"inbox": str(inbox), "mission_id": mission_id}
-    if mission_id:
-        mid = mission_id.strip().replace("..", "").replace("/", "").replace("\\", "")
-        folder = inbox / mid
-        if not folder.is_dir():
-            raise FileNotFoundError(f"inbox にミッションがありません: {folder}")
-        bag_ok = _looks_like_bag(folder)
-        files = [p.name for p in folder.iterdir()][:40]
-        proof.update({"folder": str(folder), "files": files, "bag_ok": bag_ok})
-        if not bag_ok:
-            raise RuntimeError(
-                f"{folder} に rosbag2（metadata.yaml + .db3/.mcap）または画像が見つかりません"
-            )
-    else:
-        # Soft check: warn via return if inbox empty, but still allow skip-path ack
-        dirs = [p.name for p in inbox.iterdir()] if inbox.is_dir() else []
-        proof["inbox_missions"] = dirs[:50]
-        if not dirs:
-            note = (note or "") + " | warning:inbox_empty"
+    mid = mission_id.strip().replace("..", "").replace("/", "").replace("\\", "")
+    folder = inbox / mid
+    proof: dict = {"inbox": str(inbox), "mission_id": mid}
+    if not folder.is_dir():
+        raise FileNotFoundError(f"inbox にミッションがありません: {folder}")
+    bag_ok = _looks_like_bag(folder)
+    files = [p.name for p in folder.iterdir()][:40]
+    proof.update({"folder": str(folder), "files": files, "bag_ok": bag_ok})
+    if not bag_ok:
+        raise RuntimeError(
+            f"{folder} に rosbag2（metadata.yaml + .db3/.mcap）または画像が見つかりません"
+        )
 
     with connect() as conn:
         audit(
             conn,
             "pipeline.sim_generate",
-            "pipeline",
-            mission_id or "sim_generate",
+            "mission",
+            mid,
             {
-                "note": note or "CARLA/Autoware_e2e で bag を data/inbox へ置く手順を確認した",
+                "note": note or "inbox 上のシミュ／bag を確認した",
                 "docs": "docs/pipeline-stages.md",
                 "proof": proof,
             },
@@ -184,10 +183,10 @@ def ack_sim_generate(note: str = "", mission_id: str | None = None) -> dict:
         "ok": True,
         "acked": True,
         "count": int(n),
-        "mission_id": mission_id,
+        "mission_id": mid,
         "proof": proof,
-        "next": "data/inbox/<mission_id>/ に bag を置いて工程2へ",
-        "howto": "Autoware_e2e の OFFROAD_CARLA_HYBRID.md に従い rosbag2 を録り、inbox へコピーする。",
+        "next": "工程3で POST /ingest",
+        "howto": "Autoware_e2e の OFFROAD_CARLA_HYBRID.md / docs/carla.md。実機のみなら工程1スキップ。",
     }
 
 

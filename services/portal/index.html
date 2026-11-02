@@ -1552,13 +1552,19 @@
           return job;
         }
       }
-      jobEl.textContent = "まだ実行中です: " + jobId;
+      const timedOut = {
+        status: "timeout",
+        job_id: jobId,
+        error: "ポーリング上限に達しました（まだ実行中の可能性）。ジョブ " + jobId + " を確認してください。",
+      };
+      jobEl.textContent = label + ": " + timedOut.error;
       hint.textContent = jobEl.textContent;
-      return { status: "running", job_id: jobId };
+      return timedOut;
     }
 
     async function finishStep(stepId, job) {
-      if (job && job.status === "failed") {
+      const bad = job && (job.status === "failed" || job.status === "timeout" || job.status === "running");
+      if (bad) {
         await load();
         selected = stepId;
         view = "flow";
@@ -1595,6 +1601,12 @@
         }
         const job = await waitJob(started.job_id, label, tries);
         await finishStep(stepId, job);
+        if (job.status === "failed") {
+          throw new Error(label + " 失敗: " + (job.error || job.job_id));
+        }
+        if (job.status === "timeout") {
+          throw new Error(job.error || (label + " がタイムアウトしました"));
+        }
         return job;
       } catch (e) {
         const msg = label + " に失敗しました: " + e.message;
@@ -1625,8 +1637,14 @@
       if (s.id === "sim_generate") {
         form =
           '<div class="form-grid">' +
-          "<p>CARLA は本 compose 外（Autoware_e2e）。録った rosbag2 を inbox へ取り込みます。</p>" +
+          "<p>CARLA は compose 外。ホスト／WSL で起動し、録った rosbag2 を inbox へ取り込みます。</p>" +
           '<p id="act-carla-status" class="muted">CARLA / Autoware 状態を読み込み中…</p>' +
+          '<div class="row" style="gap:8px;flex-wrap:wrap">' +
+          '<button type="button" id="act-carla-start">CARLA 起動</button>' +
+          '<button type="button" class="secondary" id="act-carla-mining">mining_sim 起動</button>' +
+          '<button type="button" class="secondary" id="act-carla-stack">CARLA+mining 一括</button>' +
+          '<button type="button" class="secondary" id="act-carla-stop">停止</button>' +
+          "</div>" +
           "<label>Autoware 配下の CARLA bag</label>" +
           '<select id="act-carla-bag"><option value="">読み込み中…</option></select>' +
           "<label>inbox ミッション名（任意）</label>" +
@@ -1824,13 +1842,21 @@
       if (s.id === "sim_generate") {
         const stEl = document.getElementById("act-carla-status");
         const bagSel = document.getElementById("act-carla-bag");
-        fetch("/api/carla/status").then((r) => r.ok ? r.json() : null).then((st) => {
-          if (!stEl || gen !== formGen) return;
-          if (!st) { stEl.textContent = "CARLA API に届きません（Catalog 起動を確認）"; return; }
-          stEl.textContent = st.ok
-            ? ("Autoware: " + st.autoware_e2e_root + " ／ 発見 bag " + (st.bag_count || 0) + " ／ mining_sim " + (st.mining_sim ? "あり" : "なし"))
-            : ("Autoware_e2e 未検出: " + (st.autoware_e2e_root || "") + "（.env の AUTOWARE_E2E_ROOT）");
-        }).catch(() => { if (stEl) stEl.textContent = "CARLA 状態の取得に失敗"; });
+        function refreshCarlaStatus() {
+          return fetch("/api/carla/status").then((r) => r.ok ? r.json() : null).then((st) => {
+            if (!stEl || gen !== formGen) return;
+            if (!st) { stEl.textContent = "CARLA API に届きません（Catalog 起動を確認）"; return; }
+            const L = st.launch || {};
+            const probe = (L.probe || {});
+            const listen = probe.listening ? "TCP 応答あり" : "未起動（port " + (probe.port || 2000) + "）";
+            const root = L.carla_root ? ("CARLA_ROOT=" + L.carla_root) : "CARLA_ROOT 未設定";
+            stEl.textContent = (st.ok
+              ? ("Autoware OK ／ bag " + (st.bag_count || 0) + " ／ ")
+              : ("Autoware 未検出 ／ ")) + root + " ／ " + listen +
+              (L.host_worker_required ? " ／ 起動は host worker 経由" : "");
+          }).catch(() => { if (stEl) stEl.textContent = "CARLA 状態の取得に失敗"; });
+        }
+        refreshCarlaStatus();
         fetch("/api/carla/bags").then((r) => r.ok ? r.json() : { bags: [] }).then((bj) => {
           if (!bagSel || gen !== formGen) return;
           const bags = bj.bags || [];
@@ -1841,6 +1867,33 @@
             bags.length ? "選んでください" : "datasets/carla_bags 等に bag がありません"
           );
         }).catch(() => {});
+        async function runCarlaLaunch(comps, btn) {
+          const idle = btn.textContent;
+          try {
+            await runCatalog("/carla/launch", {
+              components: comps,
+              wait_ready_sec: comps.indexOf("server") >= 0 ? 45 : 0,
+            }, "CARLA起動", btn, idle, 180, "sim_generate");
+            await refreshCarlaStatus();
+            await load();
+          } catch (_) {}
+        }
+        const startBtn = document.getElementById("act-carla-start");
+        if (startBtn) startBtn.onclick = () => runCarlaLaunch(["server"], startBtn);
+        const miningBtn = document.getElementById("act-carla-mining");
+        if (miningBtn) miningBtn.onclick = () => runCarlaLaunch(["mining_sim"], miningBtn);
+        const stackBtn = document.getElementById("act-carla-stack");
+        if (stackBtn) stackBtn.onclick = () => runCarlaLaunch(["server", "mining_sim"], stackBtn);
+        const stopBtn = document.getElementById("act-carla-stop");
+        if (stopBtn) {
+          stopBtn.onclick = async () => {
+            const idle = stopBtn.textContent;
+            try {
+              await runCatalog("/carla/stop", { components: ["server", "mining_sim"] }, "CARLA停止", stopBtn, idle, 60, "sim_generate");
+              await refreshCarlaStatus();
+            } catch (_) {}
+          };
+        }
         const hintBtn = document.getElementById("act-carla-hint");
         if (hintBtn) {
           hintBtn.onclick = async () => {
@@ -2057,9 +2110,12 @@
         try {
           if (s.id === "sim_generate") {
             const mid = ((document.getElementById("act-inbox") || {}).value || "").trim();
+            if (!mid) {
+              throw new Error("確認する inbox ミッションを選ぶか、実機のみなら「工程2へ」でスキップしてください");
+            }
             await runCatalog(
               "/pipeline/sim-generate",
-              { action: "ack", note: "operator ack", mission_id: mid || null },
+              { action: "ack", note: "operator ack", mission_id: mid },
               "シミュ確認",
               go,
               idle,
@@ -2122,13 +2178,25 @@
               name: document.getElementById("act-name").value.trim() || datasetId,
               task: task,
               mission_id: dsMission || null,
-            }, "データセット生成", go, idle, task === "autoe2e" ? 600 : 90, "dataset");
+            }, "データセット生成", go, idle, task === "autoe2e" ? 1800 : 90, "dataset");
             return;
           }
           if (s.id === "train") {
-            const ds = document.getElementById("act-ds").value;
+            const dsSel = document.getElementById("act-ds");
+            const ds = dsSel.value;
             if (!ds) throw new Error("データセット版を選んでください");
-            await runCatalog("/train", { dataset_version_id: ds, stage: document.getElementById("act-stage").value }, "学習", go, idle, 180, "train");
+            const dsLabel = ((dsSel.options[dsSel.selectedIndex] || {}).textContent || "").toLowerCase();
+            const longTrain = dsLabel.indexOf("autoe2e") >= 0;
+            // autoe2e はホスト GPU・長時間。2s×3600 ≒ 2h
+            await runCatalog(
+              "/train",
+              { dataset_version_id: ds, stage: document.getElementById("act-stage").value },
+              "学習",
+              go,
+              idle,
+              longTrain ? 3600 : 180,
+              "train"
+            );
             return;
           }
           if (s.id === "gate") {
@@ -2184,11 +2252,19 @@
               if (last.done) break;
             }
             rememberResult(last);
+            if (!last.done) {
+              await finishStep("package_sync", {
+                status: "timeout",
+                error: "同期が完了しませんでした（部分送信の可能性）",
+                result_json: last,
+              });
+              throw new Error("同期が完了しませんでした。tx=" + tx);
+            }
             if (last.delivery_path) {
               document.getElementById("hint").textContent =
                 "同期完了: " + last.delivery_path + "（車両 inbox）";
             }
-            await finishStep("package_sync", { status: last.done ? "completed" : "running", result_json: last });
+            await finishStep("package_sync", { status: "completed", result_json: last });
             return;
           }
         } catch (e) {

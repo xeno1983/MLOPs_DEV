@@ -1,7 +1,8 @@
 """CARLA / Autoware_e2e 連動（compose 外）。
 
-契約: シミュは Autoware_e2e 側で録り、成果 rosbag2 を本スタックの data/inbox/<mission>/ へ載せる。
-Catalog は起動制御せず、bag の発見・inbox 取込・手順案内だけを担う。
+契約: シミュはホスト/WSL の CARLA + Autoware_e2e で録り、成果 rosbag2 を
+data/inbox/<mission>/ へ載せる。起動は carla_launch（host worker / CLI）経由。
+Catalog コンテナ自体は CarlaUE4 を抱えない。
 """
 from __future__ import annotations
 
@@ -38,9 +39,10 @@ def resolve_autoware_root() -> Path:
             p = cand
         if not p.is_dir():
             continue
-        # 本物の Autoware_e2e か、stub でもディレクトリがあれば候補にする
-        if (p / "OFFROAD_CARLA_HYBRID.md").is_file() or (p / "tools").is_dir() or any(p.iterdir()):
+        # 本物の Autoware_e2e を優先（stub の空ディレクトリだけでは採用しない）
+        if (p / "OFFROAD_CARLA_HYBRID.md").is_file() or (p / "tools").is_dir():
             return p
+    # 最後の手段: 設定パス（存在しなくても呼び出し側で失敗する）
     return Path(settings.autoware_e2e_root)
 
 
@@ -49,6 +51,13 @@ def status() -> dict:
     hybrid = root / "OFFROAD_CARLA_HYBRID.md"
     mining = root / "autoware.off-road" / "Simulation" / "CARLA" / "scripts" / "mining_sim.py"
     bags = list_bags(limit=20)
+    launch_info: dict = {}
+    try:
+        from ugv_mlops.carla_launch import launch_status
+
+        launch_info = launch_status()
+    except Exception as exc:  # noqa: BLE001 — status は壊さない
+        launch_info = {"ok": False, "error": str(exc)}
     return {
         "ok": root.is_dir(),
         "autoware_e2e_root": str(root),
@@ -58,6 +67,7 @@ def status() -> dict:
         "carla_in_compose": False,
         "bag_count": len(bags.get("bags") or []),
         "bags_preview": (bags.get("bags") or [])[:5],
+        "launch": launch_info,
         "howto": howto(),
         "next": "録った bag を POST /carla/import で inbox へ。その後工程3 ingest。",
     }
@@ -66,8 +76,8 @@ def status() -> dict:
 def howto() -> list[str]:
     root = resolve_autoware_root()
     return [
-        "1. WSL/Linux で CARLA を起動（CarlaUE4.sh）。本 compose には載せない。",
-        "2. mining_sim.py --sync（Autoware_e2e/autoware.off-road/Simulation/CARLA）。",
+        "1. ポータル／CLI／ランチャーで CARLA を起動（compose 外・host worker 可）。",
+        "2. mining_sim.py --sync（同 UI の「mining_sim 起動」または手動）。",
         "3. ros2 bag record でカメラ・odometry・（可能なら）cmd_vel/ackermann を録る。",
         f"4. 出力先の例: {root / 'datasets' / 'carla_bags' / '<run_id>'}",
         "5. ポータル工程1または POST /carla/import で data/inbox/<mission>/ へ取り込む。",
@@ -241,16 +251,18 @@ def _resolve_source(source: str, root: Path) -> Path:
 
 
 def _assert_allowed(path: Path, root: Path) -> None:
-    """Autoware root・inbox・work 配下のみ許可（パストラバーサル防止）。"""
+    """Autoware root と inbox 配下のみ許可（work 全体は不可・パストラバーサル防止）。"""
     try:
         resolved = path.resolve()
     except OSError as exc:
         raise PermissionError(str(exc)) from exc
-    allowed = [root.resolve(), settings.inbox_path.resolve(), settings.work_path.resolve()]
-    # docker mount alias
-    for extra in (Path("/autoware_e2e"), Path("/data/inbox"), Path("/data/work")):
+    allowed = [root.resolve(), settings.inbox_path.resolve()]
+    for extra in (Path("/autoware_e2e"), Path("/data/inbox")):
         if extra.is_dir():
-            allowed.append(extra.resolve())
+            try:
+                allowed.append(extra.resolve())
+            except OSError:
+                pass
     ok = False
     for base in allowed:
         try:
@@ -260,7 +272,7 @@ def _assert_allowed(path: Path, root: Path) -> None:
         except ValueError:
             continue
     if not ok:
-        raise PermissionError(f"source は Autoware_e2e / inbox / work 配下のみ: {resolved}")
+        raise PermissionError(f"source は Autoware_e2e または inbox 配下のみ: {resolved}")
 
 
 def _sanitize_mission_id(value: str) -> str:

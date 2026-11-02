@@ -116,23 +116,30 @@ def evaluate_and_promote(
         else:
             kind = "joblib"
         size_bytes = 0
-        try:
-            from ugv_mlops.storage import get_bytes, parse_s3_uri
-
-            if run.get("artifact_uri"):
-                bkt, key = parse_s3_uri(run["artifact_uri"])
-                size_bytes = len(get_bytes(bkt, key))
-        except Exception as exc:
-            reasons_pre = [f"artifact fetch failed: {exc}"]
+        reasons_pre: list[str] = []
+        artifact_uri = (run.get("artifact_uri") or "").strip()
+        if not artifact_uri:
+            reasons_pre.append("training_run has no artifact_uri")
         else:
-            reasons_pre = []
+            try:
+                from ugv_mlops.storage import get_bytes, parse_s3_uri
+
+                bkt, key = parse_s3_uri(artifact_uri)
+                size_bytes = len(get_bytes(bkt, key))
+                if size_bytes <= 0:
+                    reasons_pre.append("artifact size is 0 bytes")
+            except Exception as exc:
+                reasons_pre.append(f"artifact fetch failed: {exc}")
         thresholds = gate_thresholds(gate_name)
         reasons: list[str] = list(reasons_pre)
 
-        try:
-            assert_artifact_allowed(stage, kind, size_bytes)
-        except PermissionError as exc:
-            reasons.append(str(exc))
+        if size_bytes > 0:
+            try:
+                assert_artifact_allowed(stage, kind, size_bytes)
+            except PermissionError as exc:
+                reasons.append(str(exc))
+        elif not any("artifact" in r for r in reasons):
+            reasons.append("artifact size is 0 bytes")
 
         if task in AUTOE2E_TASKS:
             reasons.extend(_autoe2e_reasons(metrics, thresholds))
@@ -167,9 +174,14 @@ def evaluate_and_promote(
             sort_keys=True,
         ).encode()
         signature = None
-        if thresholds.get("require_signature") or True:
+        if thresholds.get("require_signature", True):
             signature = sign_bytes(payload)
             if thresholds.get("require_integrity") and not verify_bytes(payload, signature):
+                reasons.append("integrity verification failed")
+        elif thresholds.get("require_integrity"):
+            # smoke 等で署名不要でも、要求があれば検証可能な署名を付ける
+            signature = sign_bytes(payload)
+            if not verify_bytes(payload, signature):
                 reasons.append("integrity verification failed")
 
         passed = not reasons
