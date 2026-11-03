@@ -1149,6 +1149,14 @@ def carla_status() -> dict:
     return jsonable_encoder(status())
 
 
+@app.get("/autoe2e/status")
+def autoe2e_status() -> dict:
+    """AutoE2E（Autoware_e2e）連携の前提チェック。"""
+    from ugv_mlops.autoe2e import readiness
+
+    return jsonable_encoder(readiness())
+
+
 @app.get("/carla/bags")
 def carla_bags() -> dict:
     from ugv_mlops.carla_bridge import list_bags
@@ -1165,8 +1173,8 @@ def carla_record_hint(out_name: str = "mine_001") -> dict:
 
 @app.post("/carla/launch")
 def carla_launch(req: CarlaLaunchReq) -> dict:
-    """CARLA server / mining_sim を起動（compose 外・既定は host job）。"""
-    from ugv_mlops.carla_launch import in_container, launch
+    """CARLA server / mining_sim を起動（compose 外・host agent / host job）。"""
+    from ugv_mlops.carla_launch import in_container, launch, write_host_request
 
     payload = {
         "components": req.components or ["server"],
@@ -1177,26 +1185,34 @@ def carla_launch(req: CarlaLaunchReq) -> dict:
         return jsonable_encoder(launch(**payload))
     if req.dry_run and not in_container():
         return jsonable_encoder(launch(**payload))
+    # 共有ボリュームへ依頼（carla-host-agent.ps1 が拾う）+ host job
+    req_info = write_host_request("launch", payload["components"])
     JOBS_ENQUEUED.labels("carla_launch").inc()
     return {
         "job_id": enqueue("carla_launch", payload),
         "runner": "host",
-        "hint": "host worker（MLOPS_gpu_worker.bat）が必要。または CLI: ugv-mlops carla-launch",
+        "request": req_info,
+        "hint": (
+            "ホストで scripts/carla-host-agent.ps1（または MLOPS_gpu_worker）を動かしてください。"
+            "ポータルは TCP :2000 の応答を待ちます。"
+        ),
     }
 
 
 @app.post("/carla/stop")
 def carla_stop(req: CarlaStopReq) -> dict:
-    from ugv_mlops.carla_launch import in_container, stop
+    from ugv_mlops.carla_launch import in_container, stop, write_host_request
 
     payload = {"components": req.components}
     if req.sync and not in_container():
         return jsonable_encoder(stop(req.components))
+    req_info = write_host_request("stop", req.components)
     JOBS_ENQUEUED.labels("carla_stop").inc()
     return {
         "job_id": enqueue("carla_stop", payload),
         "runner": "host",
-        "hint": "host worker が carla_stop を実行します",
+        "request": req_info,
+        "hint": "ホスト agent / host worker が stop を実行します",
     }
 
 

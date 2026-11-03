@@ -11,18 +11,50 @@
 | 項目 | 内容 |
 |------|------|
 | Autoware_e2e | `.env` の `AUTOWARE_E2E_ROOT` |
-| CARLA | `.env` の `CARLA_ROOT`（CarlaUE4.sh / .exe） |
+| CARLA 0.9.15 | `.env` の `CARLA_ROOT`（推奨: WSL `~/CARLA`） |
+| Mine_01 | mining_sim が `load_world('Mine_01')`。**公式 AdditionalMaps には含まれない**場合あり |
 | 起動モード | `CARLA_LAUNCH_MODE=wsl`（既定）/ `native` / `script` |
 | host worker | ポータルから起動するとき必須（`launcher/MLOPS_gpu_worker.bat`） |
+
+---
+
+## 準備（初回）
+
+```powershell
+# 1) WSL に CARLA 本体を取得（数 GB〜。時間がかかる）
+.\scripts\setup-carla.ps1 -Download
+
+# 2) 前提チェック
+$env:PYTHONPATH="src"
+python -m ugv_mlops.cli carla-prepare
+
+# 3) Mine_01 を CARLA Import に配置し ImportAssets.sh（Autoware off-road 手順）
+
+# 4) ポータル工程1から起動する場合は、先にホスト agent を常駐
+.\scripts\carla-host-agent.ps1
+
+# 5) 直接起動する場合
+.\scripts\start-carla.ps1
+# または: .\scripts\carla-launch.ps1 -Component stack -WaitReadySec 90
+```
+
+**重要:** Catalog は Docker 内のため、ポータルの「CARLA 起動」は `data/work/carla/request.json` に依頼を書き、**ホストの `carla-host-agent.ps1`（または GPU host worker）が実際に CarlaUE4 を起動**します。agent 無しでは工程1のボタンはタイムアウトします。
+
+`setup-carla.ps1` がやること:
+
+- `.env` に `CARLA_ROOT` / `CARLA_LAUNCH_MODE=wsl` 等を書く  
+- WSL で `scripts/setup-carla-wsl.sh` を実行（`-Download` 時に ~8GB tar 取得。既定 URL は Backblaze）  
+- `AUTOWARE_E2E_ROOT/datasets/carla_bags` を作成  
+- `carla-prepare` チェックリストを表示  
+
+進捗確認（WSL）: `ls -lh ~/carla-downloads/CARLA_0.9.15.tar.gz` / `tail -f ~/carla-downloads/setup.log`  
 
 ---
 
 ## 流れ
 
 ```text
-ポータル / CLI / ランチャー
-    → POST /carla/launch（host job）または scripts/carla-launch.ps1
-    → CarlaUE4 + mining_sim.py
+setup-carla → carla-launch (server + mining_sim)
     → ros2 bag record → Autoware_e2e/datasets/carla_bags/<run>/
     → POST /carla/import → data/inbox/M-CARLA-.../
     → POST /ingest → data-qa → …
@@ -52,14 +84,14 @@ Catalog がコンテナ内のとき起動は **必ず host worker**。ホスト�
 
 ```powershell
 $env:PYTHONPATH="src"
-$env:CARLA_ROOT="C:\path\to\CARLA"   # または WSL 内パスを CARLA_ROOT に
+python -m ugv_mlops.cli carla-prepare
 python -m ugv_mlops.cli carla-status
 python -m ugv_mlops.cli carla-launch --component server --wait-ready-sec 40
 python -m ugv_mlops.cli carla-launch --component mining_sim
-python -m ugv_mlops.cli carla-launch --component stack --dry-run
 python -m ugv_mlops.cli carla-stop --component stack
 python -m ugv_mlops.cli carla-import "datasets/carla_bags/mine_001"
 
+.\scripts\setup-carla.ps1 -Download
 .\scripts\carla-launch.ps1 -Component stack
 ```
 

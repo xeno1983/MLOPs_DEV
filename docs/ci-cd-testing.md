@@ -156,9 +156,36 @@ flowchart LR
 - **Continuous Delivery:** staging まで自動。production は承認後に compose pull/up  
 - **Continuous Deployment（本番自動）:** 既定オフ（防衛・現場制約）
 
+スタック全体のツール境界は [design.md §6.4](design.md) も参照。
+
 ---
 
-## 8. 品質メトリク（運用）
+## 8. CI/CD を「管理する」ツールと統合
+
+実行コマンド（`pytest` / smoke）を共通にし、**管理 UI だけを環境で選ぶ**。
+
+| ツール | 用途 | 本リポとの統合 |
+|--------|------|----------------|
+| **GitHub Actions** | 開発・PR の L1 | `.github/workflows/ci-unit.yml`。workflow ファイルの push には OAuth `workflow` スコープが必要 |
+| **Gitea Actions** | オンプレ / エアギャップ | compose `full` の Gitea。同一 YAML・スクリプトをミラー |
+| **Jenkins / self-hosted runner** | L4 GPU・L5 CARLA・HIL | `scripts/` と `host_worker` を Pipeline から起動 |
+| **Woodpecker / Drone** | 軽量オンプレ CI | Gitea 連携可。Actions 代替 |
+| **Prometheus / Grafana** | runner・Catalog 死活 | パイプライン合格判定には使わない |
+| **Catalog job / MLflow** | 学習・ゲート・同期の実行 | CI オーケストレータの代替ではない |
+
+```text
+GitHub or Gitea Actions ──► pytest -m "not gpu and not carla"
+Jenkins / labeled runner ──► carla-launch / AutoE2E / compose smoke
+                                    │
+                                    ▼
+                         Catalog API / host worker / MLflow
+```
+
+ポータルに CI 専用ダッシュボードは持たない。PR Checks と（任意）Grafana を正とする。
+
+---
+
+## 9. 品質メトリク（運用）
 
 | 指標 | 目安 |
 |------|------|
@@ -169,22 +196,27 @@ flowchart LR
 
 ---
 
-## 9. 導入ロードマップ
+## 10. 導入ロードマップ
 
 | 段 | 内容 | 状態 |
 |----|------|------|
-| A | `tests/` 拡充 + `ci-unit.yml` | **本変更で A 開始** |
-| B | `requirements-dev.txt` / ruff / pytest markers | 次 |
+| A | `tests/` 拡充 + `ci-unit.yml` + `requirements-dev.txt` | **着手済**（workflow の remote 反映は権限次第） |
+| B | ruff / pytest markers（`unit` `integration` `gpu` `carla`） | 次 |
 | C | `scripts/ci-smoke.ps1` + compose profile `ci` | 次 |
 | D | self-hosted GPU / CARLA runner ラベル | 環境次第 |
-| E | Gitea ミラー向け同一スクリプト | エアギャップ時 |
+| E | Gitea Actions で同一スクリプト | エアギャップ時 |
 
 ---
 
-## 10. 開発者の最短コマンド
+## 11. 開発者の最短コマンド
 
 ```powershell
 $env:PYTHONPATH="src"
+pip install -r requirements-dev.txt
 python -m pytest tests/ -q
+python -m pytest tests/ -k "carla" -q
 python -m ugv_mlops.cli carla-launch --component server --dry-run
 ```
+
+パターン入力の例は `-k`（名前部分一致）と、導入後の `-m`（マーカー）。設計上の既定 PR フィルタは  
+`pytest tests/ -q -m "not integration and not gpu and not carla"`。

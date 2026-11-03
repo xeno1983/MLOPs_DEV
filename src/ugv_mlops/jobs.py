@@ -236,16 +236,23 @@ def _dispatch(kind: str, payload: dict) -> dict:
             note=payload.get("note") or "",
         )
     if kind == "carla_launch":
-        from ugv_mlops.carla_launch import launch
+        from ugv_mlops.carla_launch import launch, process_host_request
 
+        # request.json があればそれを優先（ポータル経由と二重実行を避ける）
+        processed = process_host_request()
+        if processed is not None:
+            return processed
         return launch(
             payload.get("components") or ["server"],
             dry_run=bool(payload.get("dry_run")),
             wait_ready_sec=float(payload.get("wait_ready_sec") or 0),
         )
     if kind == "carla_stop":
-        from ugv_mlops.carla_launch import stop
+        from ugv_mlops.carla_launch import process_host_request, stop
 
+        processed = process_host_request()
+        if processed is not None:
+            return processed
         return stop(payload.get("components"))
     if kind == "lighten":
         from ugv_mlops.lighten import export_model

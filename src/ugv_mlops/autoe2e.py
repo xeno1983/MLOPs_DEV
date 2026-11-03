@@ -24,13 +24,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import text
-
-from ugv_mlops import storage
-from ugv_mlops.db import audit, connect
-from ugv_mlops.hashing import sha256_file
 from ugv_mlops.settings import settings
-from ugv_mlops.storage import parse_s3_uri
 
 TASK = "autoe2e"
 FORMAT = "autoe2e-scenes-v1"
@@ -75,13 +69,76 @@ def python_exe(root: Path) -> Path:
 
 
 def rig_path(root: Path) -> Path:
-    rig = Path(settings.autoe2e_rig) if settings.autoe2e_rig else root / "config" / "rosbag2_autoe2e" / "rig.yaml"
-    if not rig.is_file():
-        raise RuntimeError(
-            f"rig 設定がありません: {rig}。config/rosbag2_autoe2e/rig.example.yaml をコピーして"
-            "トピックとフレームを自分の車両に合わせてください。"
-        )
-    return rig
+    if settings.autoe2e_rig:
+        rig = Path(settings.autoe2e_rig)
+        if not rig.is_file():
+            raise RuntimeError(f"AUTOE2E_RIG がありません: {rig}")
+        return rig
+    base = root / "config" / "rosbag2_autoe2e"
+    for name in ("rig.yaml", "rig.carla.yaml", "rig.outdoor01.yaml", "rig.example.yaml"):
+        cand = base / name
+        if cand.is_file():
+            return cand
+    raise RuntimeError(
+        f"rig 設定がありません（{base}）。"
+        "rig.example.yaml をコピーするか、CARLA 用の rig.carla.yaml を用意してください。"
+    )
+
+
+def readiness() -> dict:
+    """ホスト側の AutoE2E 前提（ポータル／CLI 用）。"""
+    checks: list[dict] = []
+
+    def add(name: str, ok: bool, detail: str, fix: str = "") -> None:
+        checks.append({"name": name, "ok": bool(ok), "detail": detail, "fix": fix})
+
+    root_ok = False
+    root: Path | None = None
+    try:
+        root = autoware_root()
+        root_ok = True
+        add("autoware_e2e", True, str(root))
+    except Exception as exc:  # noqa: BLE001
+        add("autoware_e2e", False, str(exc), ".env の AUTOWARE_E2E_ROOT")
+
+    py_ok = False
+    if root_ok and root is not None:
+        try:
+            py = python_exe(root)
+            py_ok = True
+            add("venv_python", True, str(py))
+        except Exception as exc:  # noqa: BLE001
+            add("venv_python", False, str(exc), "Autoware_e2e で .venv-autoe2e を作成")
+        try:
+            rig = rig_path(root)
+            add("rig", True, str(rig))
+        except Exception as exc:  # noqa: BLE001
+            add("rig", False, str(exc), "config/rosbag2_autoe2e/rig.carla.yaml を参照")
+        extract = root / EXTRACT_REL
+        train = root / TRAINER_REL
+        add("extract_cli", extract.is_file(), str(extract))
+        add("trainer", train.is_file(), str(train))
+
+    add(
+        "host_worker",
+        True,
+        "build_dataset/train(autoe2e) は runner=host。launcher/MLOPS_gpu_worker.bat を起動",
+        "",
+    )
+    ok = all(c["ok"] for c in checks if c["name"] != "host_worker")
+    return {
+        "ok": ok,
+        "task": TASK,
+        "format": FORMAT,
+        "checks": checks,
+        "next": [
+            "CARLA + mining_sim + scripts/carla-odom-bridge.py",
+            "scripts/carla-autoe2e-record.sh <run_id> で bag 録画",
+            "ポータル工程1 import → 工程3 ingest → 工程7 task=autoe2e（mission 必須）",
+            "launcher/MLOPS_gpu_worker.bat で版切り・学習ジョブを消化",
+            "工程9 gate → 工程11 package",
+        ],
+    }
 
 
 def _run(cmd: list[str], cwd: Path, log_file: Path | None = None) -> int:
@@ -147,7 +204,12 @@ def _scene_stats(scenes: list[Path]) -> dict:
 
 def build_autoe2e_dataset(dataset_id: str, name: str, mission_id: str | None = None) -> dict:
     """bag → AutoE2E scene → zip → Garage datasets → dataset_version。"""
+    from sqlalchemy import text
+
+    from ugv_mlops import storage
     from ugv_mlops.dataset import next_version
+    from ugv_mlops.db import audit, connect
+    from ugv_mlops.hashing import sha256_file
 
     if not mission_id:
         raise RuntimeError("task=autoe2e には mission_id が必要です（切り出す bag のミッション）。")
@@ -294,6 +356,12 @@ def _end_mlflow(active: bool, status: str) -> None:
 
 def train_autoe2e(dataset_version_id: str, stage: str | None = None, params: dict | None = None) -> dict:
     import mlflow
+    from sqlalchemy import text
+
+    from ugv_mlops import storage
+    from ugv_mlops.db import audit, connect
+    from ugv_mlops.hashing import sha256_file
+    from ugv_mlops.storage import parse_s3_uri
 
     stage = stage or settings.default_learning_stage
     if stage not in ALLOWED_STAGES:

@@ -27,7 +27,10 @@ $env:CATALOG_DATABASE_URL = "postgresql+psycopg://${pgUser}:${pgPass}@127.0.0.1:
 $env:MINIO_ENDPOINT = "127.0.0.1:9000"
 $env:MINIO_SECURE = "false"
 $env:S3_REGION = "garage"
-foreach ($k in @("MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "DEFAULT_LEARNING_STAGE", "AUTOWARE_E2E_ROOT")) {
+foreach ($k in @(
+    "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "DEFAULT_LEARNING_STAGE", "AUTOWARE_E2E_ROOT",
+    "AUTOE2E_RIG", "AUTOE2E_PYTHON", "AUTOE2E_EPOCHS", "AUTOE2E_STRIDE", "AUTOE2E_ACCUM_STEPS", "AUTOE2E_EXTRA_ARGS"
+)) {
     $v = Read-DotEnv $k
     if ($v) { Set-Item -Path "Env:$k" -Value $v }
 }

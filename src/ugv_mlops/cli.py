@@ -299,6 +299,26 @@ def carla_status_cmd() -> None:
     typer.echo(json.dumps(status(), indent=2, default=str, ensure_ascii=False))
 
 
+@app.command("carla-prepare")
+def carla_prepare_cmd() -> None:
+    """シミュ起動の前提チェック（DL は scripts/setup-carla.ps1 -Download）。"""
+    from ugv_mlops.carla_launch import prepare
+
+    result = prepare()
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@app.command("autoe2e-status")
+def autoe2e_status_cmd() -> None:
+    """Autoware AutoE2E 連携の前提（rig / venv / ツール）。"""
+    from ugv_mlops.autoe2e import readiness
+
+    result = readiness()
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
 @app.command("carla-bags")
 def carla_bags_cmd() -> None:
     from ugv_mlops.carla_bridge import list_bags

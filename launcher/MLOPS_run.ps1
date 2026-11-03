@@ -166,6 +166,12 @@ function Start-Stack([switch]$Full) {
         docker compose ps
     }
     Start-Xtreme1
+    # ポータル工程1の CARLA 起動用（Catalog は Docker 内のためホストで CarlaUE4 を起動）
+    $agent = Join-Path $Root "scripts\carla-host-agent.ps1"
+    if (Test-Path $agent) {
+        Write-Host "CARLA host agent を別ウィンドウで起動します（工程1で必要）…"
+        Start-Process powershell -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", $agent) -WindowStyle Normal
+    }
 }
 
 function Show-Status {
@@ -383,6 +389,7 @@ function Show-Dvc {
 function Show-Carla {
     Write-Host ""
     Write-Host " CARLA（compose 外。起動は host / WSL。詳細 docs/carla.md）"
+    Write-Host "  0  初回準備 setup-carla.ps1（-Download は大きい）"
     Write-Host "  1  状態 GET /carla/status"
     Write-Host "  2  bag 一覧 GET /carla/bags"
     Write-Host "  3  inbox へ取込 POST /carla/import"
@@ -393,6 +400,14 @@ function Show-Carla {
     Write-Host "  8  ローカル直接起動 scripts/carla-launch.ps1"
     $pick = Read-Host "番号"
     switch ($pick) {
+        "0" {
+            $dl = Read-Host "本体をダウンロードする? (y/N)"
+            if ($dl -match '^[yY]') {
+                & (Join-Path $Root "scripts\setup-carla.ps1") -Download
+            } else {
+                & (Join-Path $Root "scripts\setup-carla.ps1")
+            }
+        }
         "1" {
             try { Write-Host ((Catalog-Get "/carla/status") | ConvertTo-Json -Depth 6) }
             catch { Write-Host $_ }

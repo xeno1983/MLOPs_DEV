@@ -90,7 +90,8 @@ Catalog の `dataset.task` と、版切り・学習・ゲート・デモの対�
 | ゲート | ADE/FDE 系（`ade_6p4s_m` 等）。親より改善・定速度比などの閾値は `artifact_policy.yaml` の staging/production |
 | ワーカー | `jobs.runner_for` が `host` を付ける。compose の docker worker では動かない → `python -m ugv_mlops.host_worker`（または `launcher/MLOPS_gpu_worker.*`） |
 | 前提 | `.env` の `AUTOWARE_E2E_ROOT`、Autoware 側の Python/venv、ホストから Garage/MLflow/Postgres に届くこと |
-| 確認方法 | ポータル工程7で `autoe2e` + ミッション ID → 版切りジョブが host 待ち → ホストワーカー起動 → train → gate。**ワンクリックデモは未用意** |
+| 確認方法 | 手順の正本は [autoe2e.md](autoe2e.md)。ポータル工程7で `autoe2e` + ミッション ID → `MLOPS_gpu_worker` → train → gate。**ワンクリックデモは未用意** |
+| ROS2 / CARLA | `rig.carla.yaml` + `scripts/carla-odom-bridge.py` + `carla-autoe2e-record.sh`。実機は車両 rig を `AUTOE2E_RIG` に |
 
 ---
 

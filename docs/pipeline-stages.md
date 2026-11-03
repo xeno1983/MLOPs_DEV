@@ -49,7 +49,7 @@ flowchart TB
 
 | # | id | タイトル | 主ツール | Catalog 契約 | 実処理 |
 |---|-----|----------|----------|--------------|--------|
-| 1 | `sim_generate` | シミュでデータを作る | Autoware_e2e / CARLA（compose 外） | `POST /pipeline/sim-generate` | 任意で inbox の bag 実在検証＋監査 |
+| 1 | `sim_generate` | シミュでデータを作る | Autoware_e2e / CARLA（compose 外・host 起動可） | `POST /carla/launch` → import → `POST /pipeline/sim-generate` | **mission_id + bag 実体**必須。失敗は工程を進めない |
 | 2 | `collect` | 帰還／シミュ結果を置く | `data/inbox` | ホスト FS | オペレータがコピー（API 書込なし） |
 | 3 | `ingest` | カタログへ取り込む | Catalog / Worker / Garage / DVC | `POST /ingest` | パース・Garage・DVC |
 | 4 | `data_qa` | 取込データを確認する | データタブ + preview | `POST /data-qa` | カメラ/action/件数検査。不合格はジョブ失敗 |

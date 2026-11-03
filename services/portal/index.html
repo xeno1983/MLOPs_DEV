@@ -1736,8 +1736,9 @@
           '<option value="obstacle_cls">obstacle_cls（知覚）</option>' +
           '<option value="e2e">e2e</option>' +
           '<option value="detection">detection</option>' +
-          '<option value="autoe2e">autoe2e（AutoE2E 微調整。GPU ホストワーカー）</option>' +
+          '<option value="autoe2e">autoe2e（Autoware AutoE2E・GPU host worker）</option>' +
           "</select>" +
+          '<p id="act-autoe2e-hint" class="muted">autoe2e: 工程5–6スキップ可。版切り・学習は launcher\\MLOPS_gpu_worker.bat。詳細 docs/autoe2e.md</p>' +
           "<label>ミッション（任意。autoe2e は必須。知覚でも絞り込み可）</label>" +
           '<input id="act-dsmission" placeholder="M-..." />' +
           '<button type="button" id="act-go">データセットを生成</button>' +
@@ -1853,7 +1854,9 @@
             stEl.textContent = (st.ok
               ? ("Autoware OK ／ bag " + (st.bag_count || 0) + " ／ ")
               : ("Autoware 未検出 ／ ")) + root + " ／ " + listen +
-              (L.host_worker_required ? " ／ 起動は host worker 経由" : "");
+              (L.host_worker_required
+                ? " ／ 要: scripts\\\\carla-host-agent.ps1（Catalog は Docker 内）"
+                : "");
           }).catch(() => { if (stEl) stEl.textContent = "CARLA 状態の取得に失敗"; });
         }
         refreshCarlaStatus();
@@ -1869,14 +1872,58 @@
         }).catch(() => {});
         async function runCarlaLaunch(comps, btn) {
           const idle = btn.textContent;
+          const jobEl = document.getElementById("job");
+          const hint = document.getElementById("hint");
+          if (btn) { btn.disabled = true; btn.textContent = "起動中…"; }
           try {
-            await runCatalog("/carla/launch", {
+            jobEl.textContent = "CARLA 起動を依頼しています（ホスト agent が必要）…";
+            const started = await postJson("/carla/launch", {
               components: comps,
-              wait_ready_sec: comps.indexOf("server") >= 0 ? 45 : 0,
-            }, "CARLA起動", btn, idle, 180, "sim_generate");
+              wait_ready_sec: comps.indexOf("server") >= 0 ? 90 : 0,
+            });
+            if (started.hint) hint.textContent = started.hint;
+            // Catalog は Docker 内のため job 完了より TCP 応答を待つ
+            const needServer = comps.indexOf("server") >= 0;
+            let ready = false;
+            const tries = needServer ? 60 : 20;
+            for (let i = 0; i < tries; i++) {
+              await new Promise((r) => setTimeout(r, 2000));
+              let st = null;
+              try { st = await fetch("/api/carla/status").then((r) => r.ok ? r.json() : null); } catch (_) {}
+              const listening = !!(st && st.launch && st.launch.probe && st.launch.probe.listening);
+              jobEl.textContent = "CARLA 待ち " + (i + 1) + "/" + tries +
+                (listening ? " — 応答あり" : " — 未応答（scripts\\\\carla-host-agent.ps1 を起動）");
+              if (listening) { ready = true; break; }
+              // host job が失敗していたら打ち切り
+              if (started.job_id) {
+                try {
+                  const j = await fetch("/api/jobs/" + started.job_id).then((r) => r.json());
+                  if (j && j.status === "failed") {
+                    throw new Error(j.error || "host job failed");
+                  }
+                  if (j && j.status === "completed" && !needServer) { ready = true; break; }
+                } catch (e) {
+                  if (String(e.message || e).indexOf("host job") >= 0) throw e;
+                }
+              }
+            }
             await refreshCarlaStatus();
+            if (!ready) {
+              throw new Error(
+                "CARLA が起動しません。Windows で .\\scripts\\carla-host-agent.ps1 を起動した状態で再試行してください。"
+              );
+            }
+            jobEl.textContent = "CARLA 起動を確認しました（:2000）";
+            hint.textContent = jobEl.textContent;
+            await finishStep("sim_generate", { status: "completed", result_json: started });
             await load();
-          } catch (_) {}
+          } catch (e) {
+            const msg = "CARLA起動 に失敗しました: " + e.message;
+            jobEl.textContent = msg;
+            hint.textContent = msg;
+          } finally {
+            if (btn) { btn.disabled = false; btn.textContent = idle; }
+          }
         }
         const startBtn = document.getElementById("act-carla-start");
         if (startBtn) startBtn.onclick = () => runCarlaLaunch(["server"], startBtn);
@@ -2014,19 +2061,40 @@
         );
       }
       const taskSel = document.getElementById("act-task");
-      if (taskSel && opts.suggested_task) {
-        taskSel.value = opts.suggested_task;
-        const meta = TASK_META[opts.suggested_task];
-        if (meta) {
-          applyPrefill("act-dsid", meta.id);
-          applyPrefill("act-name", meta.name);
+      if (taskSel) {
+        if (opts.suggested_task) {
+          taskSel.value = opts.suggested_task;
+          const meta = TASK_META[opts.suggested_task];
+          if (meta) {
+            applyPrefill("act-dsid", meta.id);
+            applyPrefill("act-name", meta.name);
+          }
+        }
+        const hintAe = document.getElementById("act-autoe2e-hint");
+        function syncAutoe2eHint() {
+          if (!hintAe) return;
+          if (taskSel.value !== "autoe2e") {
+            hintAe.textContent = "知覚タスクはラベル必須。e2e は cmd_vel。autoe2e は Autoware 切出し＋GPU host worker。";
+            return;
+          }
+          hintAe.textContent = "autoe2e 前提を確認中…";
+          fetch("/api/autoe2e/status").then((r) => r.ok ? r.json() : null).then((st) => {
+            if (!st) { hintAe.textContent = "autoe2e status 取得失敗"; return; }
+            const bad = (st.checks || []).filter((c) => !c.ok).map((c) => c.name);
+            hintAe.textContent = st.ok
+              ? ("AutoE2E 前提 OK。mission 必須 → 生成後に MLOPS_gpu_worker.bat。rig=" + ((st.checks || []).find((c) => c.name === "rig") || {}).detail)
+              : ("未準備: " + (bad.join(", ") || "unknown") + "（docs/autoe2e.md）");
+          }).catch(() => { hintAe.textContent = "autoe2e status 取得失敗"; });
         }
         taskSel.onchange = () => {
           const m = TASK_META[taskSel.value];
-          if (!m) return;
-          applyPrefill("act-dsid", m.id);
-          applyPrefill("act-name", m.name);
+          if (m) {
+            applyPrefill("act-dsid", m.id);
+            applyPrefill("act-name", m.name);
+          }
+          syncAutoe2eHint();
         };
+        syncAutoe2eHint();
       }
       applyPrefill("act-inbox", lastResult.mission_id);
       applyPrefill("act-mid", lastResult.mission_id);

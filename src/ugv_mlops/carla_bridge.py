@@ -301,19 +301,29 @@ def _looks_like_bag(folder: Path) -> bool:
 
 
 def record_command_hint(out_name: str = "mine_001") -> dict:
-    """ros2 bag record のコピペ用（ホスト WSL で実行）。"""
+    """ros2 bag record のコピペ用（ホスト WSL で実行）。AutoE2E 向けを既定にする。"""
     root = resolve_autoware_root()
     out = root / "datasets" / "carla_bags" / out_name
     cmd = (
+        "# 1) CARLA + mining_sim 起動後、odom bridge（別ターミナル）:\n"
+        "#    python3 /mnt/c/Users/xeno1/MLOPS/scripts/carla-odom-bridge.py\n"
+        "# 2) 録画:\n"
         "ros2 bag record \\\n"
-        "  /carla/ego_vehicle/rgb_front/image \\\n"
+        "  /carla/ego_vehicle/rgb/image \\\n"
         "  /carla/ego_vehicle/odometry \\\n"
+        "  /carla/ego_vehicle/speed \\\n"
         "  /tf /tf_static \\\n"
-        f"  -o {out.as_posix()}"
+        f"  -o {out.as_posix()}\n"
+        "# または: bash /mnt/c/Users/xeno1/MLOPS/scripts/carla-autoe2e-record.sh " + out_name
     )
     return {
         "shell": "bash (WSL / Linux)",
         "output_dir": str(out),
         "command": cmd,
-        "note": "cmd_vel / ackermann が取れるトピックがあれば追加すると E2E に有利。",
+        "rig": "config/rosbag2_autoe2e/rig.carla.yaml（fill_missing_slots=front）",
+        "note": (
+            "mining_sim の画像トピックは /carla/ego_vehicle/rgb/image。"
+            "Odometry は carla-odom-bridge が /carla/ego_vehicle/odometry に出す。"
+            "取込後はポータル工程7 task=autoe2e + GPU host worker。"
+        ),
     }
