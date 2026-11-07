@@ -149,7 +149,13 @@ Label Studio: http://127.0.0.1:8081 （`admin@ugv.local` / `label_change_me`）
 
 メニュー **1** が中核起動、**2** がポータルです。Docker が止まっていれば Desktop を起こしてエンジンを待ちます。
 
-デスクトップに置くときは、`launcher\MLOPS_run.bat` へのショートカットを作る（中身のパスを書き換えない）。既存ホストの `起動スクリプト\MLOPS\MLOPS起動.bat` はユーザー名が直書きなので、新規 PC では使わずショートカットにします。
+デスクトップに置くときは:
+
+```powershell
+.\scripts\install-desktop-launchers.ps1
+```
+
+`起動スクリプト\MLOPS\` に `MLOPS起動.bat`（スタック）と `MLOPS_ROS2.bat`（CARLA / odom / bag 録画 / AutoE2E 推論 / ROS2 シェル）ができます。パスはリポジトリ相対で解決するので、ユーザー名の直書きは不要です。メインメニューの **r** からも同じ ROS2 メニューを開けます。
 
 ---
 

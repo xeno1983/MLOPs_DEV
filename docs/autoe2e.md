@@ -57,13 +57,17 @@ mining_sim が出す画像は **`/carla/ego_vehicle/rgb/image`**（`rgb_front` �
 Odometry は mining_sim に無いのでブリッジが必要。
 
 ```powershell
-# 端末1: CARLA
+# Windows デスクトップから（推奨）
+.\launcher\MLOPS_ros2.bat
+# または デスクトップ「起動スクリプト\MLOPS\MLOPS_ROS2.bat」
+#   2 CARLA / 4 mining_sim / 5 odom / 6 bag 録画 / 7 推論ノード
+
+# 手動でも可:
 .\scripts\start-carla.ps1
-# 端末2: mining_sim（Autoware 手順）
-# 端末3: WSL で録画（odom bridge 込み）
-wsl -d Ubuntu -- bash /mnt/c/Users/xeno1/MLOPS/scripts/carla-autoe2e-record.sh mine_001
+.\launcher\ros2\start-bag-record.ps1   # WSL で odom+ros2 bag record
 ```
 
+初回だけデスクトップへ配置: `.\scripts\install-desktop-launchers.ps1`  
 ポータル工程1「録画コマンドを表示」でも同内容のヒントが出る。
 
 ---
@@ -102,9 +106,48 @@ python -m ugv_mlops.cli autoe2e-status
 
 ---
 
-## 実機 ROS2 bag
+## 実機 / 自前 ROS2 bag
 
-`rig.example.yaml` / 車両専用 YAML を `AUTOE2E_RIG` に指定。トピック名が CARLA と違うだけ。inbox → ingest → 以降は同じ。
+実機 bag にはだいたい **カメラ・LiDAR・GNSS・IMU・車速** が入る。AutoE2E 学習に使うのは次だけ:
+
+| 必要 | 用途 |
+|------|------|
+| カメラ画像（最低 front） | 観測 |
+| ego pose（`nav_msgs/Odometry` 等） | 軌跡教師（poses.txt） |
+| CameraInfo / TF または手動キャリブ | `calib.json` |
+
+**使わない:** LiDAR、地図、生 IMU（pose に融合済みなら不要）、単独の車速（pose 合成の補助にだけ使う）。
+
+pose が GNSS（`sensor_msgs/NavSatFix`）だけのときは、MLOPS が ENU 軌跡の `/autoe2e/odometry` を合成する。可能なら LIO/RTK の Odometry を bag に入れてそちらのトピックを rig に書く。
+
+### 手順
+
+```powershell
+# 1) bag を inbox へ（metadata.yaml 付き rosbag2 フォルダ）
+#    data/inbox/<mission_id>/...
+
+# 2) トピック確認
+$env:PYTHONPATH="src"
+python -m ugv_mlops.cli autoe2e-inspect -m <mission_id>
+
+# 3) rig 下書き +（必要なら）GNSS→odom 合成
+python -m ugv_mlops.cli autoe2e-prepare -m <mission_id>
+# 出力: data/work/autoe2e/rigs/<mission_id>.yaml
+#       data/work/autoe2e/pose_bags/<mission_id>/autoe2e_pose/
+
+# 4) ingest（ポータル工程3）後、データセット切出し
+python -m ugv_mlops.cli autoe2e-build -m <mission_id>
+# または POST /datasets/build
+#   {"dataset_id":"ds-vehicle-01","task":"autoe2e","mission_id":"<mission_id>","prepare_pose":true}
+
+# 5) host worker で train
+.\launcher\MLOPS_gpu_worker.bat
+```
+
+手書きテンプレ: [configs/autoe2e/rig.vehicle.example.yaml](../configs/autoe2e/rig.vehicle.example.yaml)  
+キャリブ（`intrinsics` / `extrinsic`）は仮値のまま学習すると幾何が崩れるので、実測に差し替える。
+
+1cam の間は rig の `extract.fill_missing_slots: front` で Stage A（他スロット複製）。6cam 揃ったら各スロットを書いて fill を空にする。
 
 ---
 

@@ -319,6 +319,72 @@ def autoe2e_status_cmd() -> None:
     raise typer.Exit(0 if result.get("ok") else 1)
 
 
+@app.command("autoe2e-inspect")
+def autoe2e_inspect_cmd(
+    mission_id: str = typer.Option("", "--mission-id", "-m", help="ingest 済みミッション"),
+    bag: Path = typer.Option(None, "--bag", "-b", help="rosbag2 ディレクトリまたは .mcap"),
+) -> None:
+    """自前 rosbag2 のトピックを調べ、AutoE2E に足りるかを表示。"""
+    from ugv_mlops.autoe2e_vehicle import inspect_bags, resolve_mission_bags
+
+    bags = resolve_mission_bags(mission_id or None, bag)
+    result = inspect_bags(bags)
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@app.command("autoe2e-prepare")
+def autoe2e_prepare_cmd(
+    mission_id: str = typer.Option("", "--mission-id", "-m"),
+    bag: Path = typer.Option(None, "--bag", "-b"),
+    camera_topic: str = typer.Option("", help="画像トピック上書き"),
+    gnss_topic: str = typer.Option("", help="NavSatFix トピック"),
+    imu_topic: str = typer.Option("", help="Imu トピック（yaw 補助）"),
+    speed_topic: str = typer.Option("", help="車速トピック"),
+    pose_topic: str = typer.Option("", help="既存 odom トピック"),
+    force_pose_synth: bool = typer.Option(False, "--force-pose-synth", help="odom があっても GNSS から再合成"),
+    write_autoware_rig: bool = typer.Option(False, "--write-autoware-rig", help="Autoware config にもコピー"),
+) -> None:
+    """inspect → GNSS→odom 合成（必要時）→ rig YAML 下書き。"""
+    from ugv_mlops.autoe2e_vehicle import prepare_vehicle_autoe2e
+
+    result = prepare_vehicle_autoe2e(
+        mission_id=mission_id or None,
+        bag_path=bag,
+        camera_topic=camera_topic or None,
+        gnss_topic=gnss_topic or None,
+        imu_topic=imu_topic or None,
+        speed_topic=speed_topic or None,
+        pose_topic=pose_topic or None,
+        force_pose_synth=force_pose_synth,
+        write_autoware_rig=write_autoware_rig,
+    )
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@app.command("autoe2e-build")
+def autoe2e_build_cmd(
+    mission_id: str = typer.Option(..., "--mission-id", "-m"),
+    dataset_id: str = typer.Option("", "--dataset-id", "-d", help="空なら autoe2e-<mission>"),
+    name: str = typer.Option("", help="表示名"),
+    rig: Path = typer.Option(None, "--rig", help="rig YAML（空なら prepare 結果 / AUTOE2E_RIG）"),
+    prepare_pose: bool = typer.Option(True, "--prepare-pose/--no-prepare-pose"),
+) -> None:
+    """自前 bag（ミッション）から AutoE2E dataset_version を切る（host で実行推奨）。"""
+    from ugv_mlops.autoe2e import build_autoe2e_dataset
+
+    ds = dataset_id or f"autoe2e-{mission_id}"
+    result = build_autoe2e_dataset(
+        ds,
+        name or ds,
+        mission_id=mission_id,
+        rig_override=rig,
+        prepare_pose=prepare_pose,
+    )
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+
+
 @app.command("carla-bags")
 def carla_bags_cmd() -> None:
     from ugv_mlops.carla_bridge import list_bags

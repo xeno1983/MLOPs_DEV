@@ -31,6 +31,9 @@ def build_dataset(
     train_ratio: float = 0.7,
     val_ratio: float = 0.15,
     mission_id: str | None = None,
+    *,
+    autoe2e_rig: str | None = None,
+    prepare_pose: bool = True,
 ) -> dict:
     """Build a versioned dataset. task=obstacle_cls uses labels; task=e2e aligns bag sensors."""
     if task in {"e2e", "e2e_sequence", "end_to_end"}:
@@ -40,7 +43,13 @@ def build_dataset(
     if task in {"autoe2e", "auto_e2e", "autoe2e_finetune"}:
         from ugv_mlops.autoe2e import build_autoe2e_dataset
 
-        return build_autoe2e_dataset(dataset_id, name, mission_id=mission_id)
+        return build_autoe2e_dataset(
+            dataset_id,
+            name,
+            mission_id=mission_id,
+            rig_override=autoe2e_rig,
+            prepare_pose=prepare_pose,
+        )
     if task in {"detection", "yolox", "yolox_nano"}:
         from ugv_mlops.detect_dataset import build_detection_dataset
 

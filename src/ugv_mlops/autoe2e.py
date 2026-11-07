@@ -132,8 +132,9 @@ def readiness() -> dict:
         "format": FORMAT,
         "checks": checks,
         "next": [
-            "CARLA + mining_sim + scripts/carla-odom-bridge.py",
-            "scripts/carla-autoe2e-record.sh <run_id> で bag 録画",
+            "自前 bag: python -m ugv_mlops.cli autoe2e-inspect --mission-id <id>",
+            "  → autoe2e-prepare（GNSS のみなら odom 合成 + rig 下書き）",
+            "CARLA: mining_sim + odom bridge + carla-autoe2e-record.sh",
             "ポータル工程1 import → 工程3 ingest → 工程7 task=autoe2e（mission 必須）",
             "launcher/MLOPS_gpu_worker.bat で版切り・学習ジョブを消化",
             "工程9 gate → 工程11 package",
@@ -202,7 +203,14 @@ def _scene_stats(scenes: list[Path]) -> dict:
     return {"scenes": len(scenes), "frames": frames, "samples": samples, "scene_list": rows}
 
 
-def build_autoe2e_dataset(dataset_id: str, name: str, mission_id: str | None = None) -> dict:
+def build_autoe2e_dataset(
+    dataset_id: str,
+    name: str,
+    mission_id: str | None = None,
+    *,
+    rig_override: str | Path | None = None,
+    prepare_pose: bool = True,
+) -> dict:
     """bag → AutoE2E scene → zip → Garage datasets → dataset_version。"""
     from sqlalchemy import text
 
@@ -215,8 +223,26 @@ def build_autoe2e_dataset(dataset_id: str, name: str, mission_id: str | None = N
         raise RuntimeError("task=autoe2e には mission_id が必要です（切り出す bag のミッション）。")
     root = autoware_root()
     py = python_exe(root)
-    rig = rig_path(root)
-    bags = _bags_for(mission_id)
+
+    mission_rig: Path | None = None
+    if prepare_pose:
+        from ugv_mlops.autoe2e_vehicle import extract_bags_for_mission
+
+        bags, mission_rig = extract_bags_for_mission(mission_id, prepare_pose=True)
+    else:
+        bags = _bags_for(mission_id)
+
+    if rig_override:
+        rig = Path(rig_override)
+        if not rig.is_file():
+            raise RuntimeError(f"rig_override がありません: {rig}")
+    elif mission_rig and mission_rig.is_file():
+        rig = mission_rig
+    else:
+        from ugv_mlops.autoe2e_vehicle import mission_rig_path
+
+        local = mission_rig_path(mission_id)
+        rig = local if local.is_file() else rig_path(root)
 
     work = settings.work_path / "datasets" / dataset_id
     if work.exists():
@@ -234,9 +260,20 @@ def build_autoe2e_dataset(dataset_id: str, name: str, mission_id: str | None = N
         raise RuntimeError(f"AutoE2E 切出しに失敗しました（exit {code}）")
     scenes = _scene_dirs(scenes_dir)
     if not scenes:
-        raise RuntimeError("scene が 1 つも出ませんでした（短すぎる・停止が長い・pose/camera が足りない）。ログを確認してください。")
+        raise RuntimeError(
+            "scene が 1 つも出ませんでした（短すぎる・停止が長い・pose/camera が足りない）。"
+            "先に `python -m ugv_mlops.cli autoe2e-inspect --mission-id …` と "
+            "`autoe2e-prepare` で rig / GNSS→odom を確認してください。"
+        )
 
-    stats = {"task": TASK, "format": FORMAT, "mission_id": mission_id, "bags": [b.name for b in bags], **_scene_stats(scenes)}
+    stats = {
+        "task": TASK,
+        "format": FORMAT,
+        "mission_id": mission_id,
+        "bags": [str(b) for b in bags],
+        "rig": str(rig),
+        **_scene_stats(scenes),
+    }
     stats["rig_sha256"] = sha256_file(rig)
     (work / "dataset.json").write_text(json.dumps(stats, indent=2, ensure_ascii=False), encoding="utf-8")
 

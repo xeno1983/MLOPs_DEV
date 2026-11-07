@@ -126,6 +126,8 @@ def _dispatch(kind: str, payload: dict) -> dict:
             payload.get("name") or payload["dataset_id"],
             payload.get("task", "obstacle_cls"),
             mission_id=payload.get("mission_id"),
+            autoe2e_rig=payload.get("autoe2e_rig"),
+            prepare_pose=bool(payload.get("prepare_pose", True)),
         )
     if kind == "train" and payload.get("_runner") == "host":
         # ホストワーカーの venv には sklearn / joblib がないので、train.py（それらを import する）を経由しない。

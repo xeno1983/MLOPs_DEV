@@ -102,7 +102,7 @@ docker compose ps
 docker compose down          # 停止（データは残る）
 ```
 
-デスクトップ: `起動スクリプト\MLOPS\MLOPS起動.bat`
+デスクトップ: `起動スクリプト\MLOPS\MLOPS起動.bat`（スタック）/ `MLOPS_ROS2.bat`（スクリプト・ROS2 ノード）。配置は `.\scripts\install-desktop-launchers.ps1`。
 
 LakeFS / Gitea / Grafana / Prometheus / Redis も要るときは:
 

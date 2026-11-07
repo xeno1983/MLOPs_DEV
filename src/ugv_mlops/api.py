@@ -51,6 +51,10 @@ class DatasetReq(BaseModel):
     name: str | None = None
     task: str = "obstacle_cls"
     mission_id: str | None = None
+    # task=autoe2e: 車両 bag 用 rig パス（空なら work/autoe2e/rigs/<mission>.yaml → AUTOE2E_RIG）
+    autoe2e_rig: str | None = None
+    # GNSS のみの bag なら /autoe2e/odometry を自動合成してから切出し
+    prepare_pose: bool = True
 
 
 class TrainReq(BaseModel):

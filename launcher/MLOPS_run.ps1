@@ -470,6 +470,7 @@ while ($true) {
     Write-Host "  8  スタック停止（データは残る）"
     Write-Host "  9  終了"
     Write-Host "  c  CARLA → inbox（bag 一覧 / 取込）"
+    Write-Host "  r  スクリプト / ROS 2（WSL・別メニュー）"
     Write-Host ""
     $choice = Read-Host "番号"
     try {
@@ -490,7 +491,19 @@ while ($true) {
             "9" { exit 0 }
             "c" { Show-Carla; Pause-Menu }
             "C" { Show-Carla; Pause-Menu }
-            default { Write-Host "1〜9 または c を入力してください。" }
+            "r" {
+                $ros2 = Join-Path $PSScriptRoot "MLOPS_ros2.bat"
+                Start-Process -FilePath $ros2
+                Write-Host "ROS2 メニューを別窓で開きました。"
+                Pause-Menu
+            }
+            "R" {
+                $ros2 = Join-Path $PSScriptRoot "MLOPS_ros2.bat"
+                Start-Process -FilePath $ros2
+                Write-Host "ROS2 メニューを別窓で開きました。"
+                Pause-Menu
+            }
+            default { Write-Host "1〜9 / c / r を入力してください。" }
         }
     } catch {
         Write-Host $_
