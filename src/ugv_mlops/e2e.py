@@ -27,6 +27,7 @@ def build_e2e_dataset(
     name: str,
     train_ratio: float = 0.7,
     val_ratio: float = 0.15,
+    mission_id: str | None = None,
 ) -> dict:
     """Time-align camera frames with action/imu/gnss/lidar for E2E driving clones."""
     work = settings.work_path / "datasets" / dataset_id
@@ -34,7 +35,7 @@ def build_e2e_dataset(
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    cameras, series = _load_e2e_sources()
+    cameras, series = _load_e2e_sources(mission_id=mission_id)
     if not cameras:
         raise RuntimeError("E2E 用のカメラサンプルがありません。先に ROS2 bag か画像を ingest してください。")
     actions = series.get("action") or []
@@ -65,7 +66,10 @@ def build_e2e_dataset(
         bucket, key = parse_s3_uri(cam["object_uri"])
         dest = work / rec["image"]
         dest.parent.mkdir(parents=True, exist_ok=True)
-        storage.get_file(bucket, key, dest)
+        try:
+            storage.get_file(bucket, key, dest)
+        except Exception:
+            continue
         records.append(rec)
         used_ids.append(cam["sample_id"])
 
@@ -178,40 +182,55 @@ def train_e2e(dataset_version_id: str, stage: str | None = None) -> dict:
     }
 
 
-def _load_e2e_sources() -> tuple[list[dict], dict[str, list[dict]]]:
+def _load_e2e_sources(mission_id: str | None = None) -> tuple[list[dict], dict[str, list[dict]]]:
+    params: dict = {}
+    mission_filter = ""
+    if mission_id:
+        mission_filter = " AND mission_id = :mid"
+        params["mid"] = mission_id
     with connect() as conn:
         cameras = conn.execute(
             text(
-                """
+                f"""
                 SELECT sample_id, object_uri, ts, modality
                 FROM learning_sample
                 WHERE modality LIKE 'camera%'
                   AND (declassified = TRUE OR classification = 'UNCLASSIFIED')
                   AND mission_id IN (
-                    SELECT mission_id FROM learning_sample WHERE modality = 'action'
+                    SELECT mission_id FROM learning_sample WHERE modality = 'action'{mission_filter}
                   )
+                  {mission_filter}
                 ORDER BY ts, sample_id
                 """
-            )
+            ),
+            params,
         ).mappings().all()
         streams = conn.execute(
             text(
-                """
+                f"""
                 SELECT sample_id, object_uri, modality
                 FROM learning_sample
                 WHERE modality IN ('imu', 'gnss', 'odom', 'action', 'lidar')
+                  {mission_filter}
                 ORDER BY created_at
                 """
-            )
+            ),
+            params,
         ).mappings().all()
     cameras = [dict(r) for r in cameras]
     series: dict[str, list[dict]] = {}
     for row in streams:
+        uri = row["object_uri"] or ""
+        if not str(uri).endswith(".jsonl"):
+            continue
         mod = row["modality"]
-        bucket, key = parse_s3_uri(row["object_uri"])
+        bucket, key = parse_s3_uri(uri)
         dest = settings.work_path / "series-cache" / f"{row['sample_id']}_{mod}.jsonl"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        storage.get_file(bucket, key, dest)
+        try:
+            storage.get_file(bucket, key, dest)
+        except Exception:
+            continue
         series.setdefault(mod, []).extend(_read_jsonl(dest))
     return cameras, series
 

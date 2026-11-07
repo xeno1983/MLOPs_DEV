@@ -14,7 +14,7 @@ from ugv_mlops.stages import assert_artifact_allowed, max_bytes
 from ugv_mlops.storage import parse_s3_uri
 
 
-def build_update_package(model_id: str, target_stage: str = "S1") -> dict:
+def build_update_package(model_id: str, target_stage: str = "S3") -> dict:
     """Create a signed, size-limited update package for intermittent delivery to a UGV."""
     with connect() as conn:
         model = conn.execute(

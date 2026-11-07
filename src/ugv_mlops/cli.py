@@ -58,6 +58,22 @@ def demo_yolox(max_images: int = 48) -> None:
     raise typer.Exit(0 if result.get("ok") else 1)
 
 
+@app.command("prepare-av-rosbag")
+def prepare_av_rosbag_cmd(max_seconds: float = 12.0) -> None:
+    from ugv_mlops.av_rosbag_sample import prepare_av_rosbag
+
+    typer.echo(json.dumps(prepare_av_rosbag(max_seconds=max_seconds), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("demo-rosbag")
+def demo_rosbag(max_seconds: float = 12.0) -> None:
+    from ugv_mlops.demo import run_av_rosbag_demo
+
+    result = run_av_rosbag_demo(max_seconds=max_seconds)
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
 @app.command("build-dataset")
 def build_dataset_cmd(dataset_id: str, name: str = "", task: str = "obstacle_cls") -> None:
     from ugv_mlops.dataset import build_dataset
@@ -221,10 +237,17 @@ def annotate_status_cmd() -> None:
 
 
 @app.command("annotate-init")
-def annotate_init_cmd(mission_id: str, kind: str = "camera", limit: int = 200) -> None:
+def annotate_init_cmd(
+    mission_id: str,
+    kind: str = "auto",
+    limit: int = 200,
+    tool: str = "labelstudio",
+) -> None:
     from ugv_mlops.annotate_io import init_session
 
-    typer.echo(json.dumps(init_session(mission_id, kind, limit), indent=2, default=str, ensure_ascii=False))
+    typer.echo(
+        json.dumps(init_session(mission_id, kind, limit, tool), indent=2, default=str, ensure_ascii=False)
+    )
 
 
 @app.command("annotate-import-masks")
@@ -239,6 +262,178 @@ def annotate_import_jsonl_cmd(path: Path, tool: str = "salt") -> None:
     from ugv_mlops.annotate_io import import_jsonl
 
     typer.echo(json.dumps(import_jsonl(path, tool), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("data-qa")
+def data_qa_cmd(mission_id: str, note: str = "") -> None:
+    from ugv_mlops.pipeline_qa import run_data_qa
+
+    typer.echo(json.dumps(run_data_qa(mission_id, True, note), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("label-review")
+def label_review_cmd(mission_id: str, note: str = "") -> None:
+    from ugv_mlops.pipeline_qa import run_label_review
+
+    typer.echo(json.dumps(run_label_review(mission_id, True, note), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("lighten")
+def lighten_cmd(model_id: str, kind: str = "onnx", target_stage: str = "") -> None:
+    from ugv_mlops.lighten import export_model
+
+    typer.echo(
+        json.dumps(
+            export_model(model_id, kind, target_stage or None),
+            indent=2,
+            default=str,
+            ensure_ascii=False,
+        )
+    )
+
+
+@app.command("carla-status")
+def carla_status_cmd() -> None:
+    from ugv_mlops.carla_bridge import status
+
+    typer.echo(json.dumps(status(), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("carla-prepare")
+def carla_prepare_cmd() -> None:
+    """シミュ起動の前提チェック（DL は scripts/setup-carla.ps1 -Download）。"""
+    from ugv_mlops.carla_launch import prepare
+
+    result = prepare()
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@app.command("autoe2e-status")
+def autoe2e_status_cmd() -> None:
+    """Autoware AutoE2E 連携の前提（rig / venv / ツール）。"""
+    from ugv_mlops.autoe2e import readiness
+
+    result = readiness()
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@app.command("autoe2e-inspect")
+def autoe2e_inspect_cmd(
+    mission_id: str = typer.Option("", "--mission-id", "-m", help="ingest 済みミッション"),
+    bag: Path = typer.Option(None, "--bag", "-b", help="rosbag2 ディレクトリまたは .mcap"),
+) -> None:
+    """自前 rosbag2 のトピックを調べ、AutoE2E に足りるかを表示。"""
+    from ugv_mlops.autoe2e_vehicle import inspect_bags, resolve_mission_bags
+
+    bags = resolve_mission_bags(mission_id or None, bag)
+    result = inspect_bags(bags)
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@app.command("autoe2e-prepare")
+def autoe2e_prepare_cmd(
+    mission_id: str = typer.Option("", "--mission-id", "-m"),
+    bag: Path = typer.Option(None, "--bag", "-b"),
+    camera_topic: str = typer.Option("", help="画像トピック上書き"),
+    gnss_topic: str = typer.Option("", help="NavSatFix トピック"),
+    imu_topic: str = typer.Option("", help="Imu トピック（yaw 補助）"),
+    speed_topic: str = typer.Option("", help="車速トピック"),
+    pose_topic: str = typer.Option("", help="既存 odom トピック"),
+    force_pose_synth: bool = typer.Option(False, "--force-pose-synth", help="odom があっても GNSS から再合成"),
+    write_autoware_rig: bool = typer.Option(False, "--write-autoware-rig", help="Autoware config にもコピー"),
+) -> None:
+    """inspect → GNSS→odom 合成（必要時）→ rig YAML 下書き。"""
+    from ugv_mlops.autoe2e_vehicle import prepare_vehicle_autoe2e
+
+    result = prepare_vehicle_autoe2e(
+        mission_id=mission_id or None,
+        bag_path=bag,
+        camera_topic=camera_topic or None,
+        gnss_topic=gnss_topic or None,
+        imu_topic=imu_topic or None,
+        speed_topic=speed_topic or None,
+        pose_topic=pose_topic or None,
+        force_pose_synth=force_pose_synth,
+        write_autoware_rig=write_autoware_rig,
+    )
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+    raise typer.Exit(0 if result.get("ok") else 1)
+
+
+@app.command("autoe2e-build")
+def autoe2e_build_cmd(
+    mission_id: str = typer.Option(..., "--mission-id", "-m"),
+    dataset_id: str = typer.Option("", "--dataset-id", "-d", help="空なら autoe2e-<mission>"),
+    name: str = typer.Option("", help="表示名"),
+    rig: Path = typer.Option(None, "--rig", help="rig YAML（空なら prepare 結果 / AUTOE2E_RIG）"),
+    prepare_pose: bool = typer.Option(True, "--prepare-pose/--no-prepare-pose"),
+) -> None:
+    """自前 bag（ミッション）から AutoE2E dataset_version を切る（host で実行推奨）。"""
+    from ugv_mlops.autoe2e import build_autoe2e_dataset
+
+    ds = dataset_id or f"autoe2e-{mission_id}"
+    result = build_autoe2e_dataset(
+        ds,
+        name or ds,
+        mission_id=mission_id,
+        rig_override=rig,
+        prepare_pose=prepare_pose,
+    )
+    typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("carla-bags")
+def carla_bags_cmd() -> None:
+    from ugv_mlops.carla_bridge import list_bags
+
+    typer.echo(json.dumps(list_bags(), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("carla-launch")
+def carla_launch_cmd(
+    component: str = typer.Option("server", help="server | mining_sim | stack"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    wait_ready_sec: float = typer.Option(0, help="server 起動後に TCP 待ち秒"),
+) -> None:
+    """ホスト上で CARLA / mining_sim を起動（compose 外）。"""
+    from ugv_mlops.carla_launch import launch
+
+    comps = ["server", "mining_sim"] if component in {"stack", "all", "both"} else [component]
+    typer.echo(
+        json.dumps(
+            launch(comps, dry_run=dry_run, wait_ready_sec=wait_ready_sec),
+            indent=2,
+            default=str,
+            ensure_ascii=False,
+        )
+    )
+
+
+@app.command("carla-stop")
+def carla_stop_cmd(
+    component: str = typer.Option("stack", help="server | mining_sim | stack"),
+) -> None:
+    from ugv_mlops.carla_launch import stop
+
+    comps = None if component in {"stack", "all", "both"} else [component]
+    typer.echo(json.dumps(stop(comps), indent=2, default=str, ensure_ascii=False))
+
+
+@app.command("carla-import")
+def carla_import_cmd(source: str, mission_id: str = "", note: str = "") -> None:
+    from ugv_mlops.carla_bridge import import_bag_to_inbox
+
+    typer.echo(
+        json.dumps(
+            import_bag_to_inbox(source, mission_id or None, note),
+            indent=2,
+            default=str,
+            ensure_ascii=False,
+        )
+    )
 
 
 @app.command()

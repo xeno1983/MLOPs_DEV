@@ -38,3 +38,5 @@ mlruns/
 *.onnx
 .DS_Store
 Thumbs.db
+
+.venv-gpuworker/
