@@ -50,6 +50,24 @@ class Settings(BaseSettings):
     annotate_dir: str = "data/annotate"
     autoware_e2e_root: str = r"C:\Users\xeno1\Autoware_e2e"
     xtreme1_url: str = "http://localhost:8190"
+    # CARLA は compose 外。ホスト / WSL で起動（host worker または CLI）。
+    carla_root: str = ""  # 空なら環境変数 CARLA_ROOT / よくあるパスを探索
+    carla_host: str = "127.0.0.1"
+    carla_port: int = 2000
+    carla_launch_mode: str = "wsl"  # wsl | native | script
+    carla_wsl_distro: str = ""  # 空なら既定 WSL
+    carla_quality: str = "Low"
+    carla_mining_extra_args: str = "--sync"
+    carla_launch_script: str = ""  # mode=script のとき使うホスト側スクリプト
+    # どのワーカーがジョブを拾うか。docker = compose の worker（CPU）、host = GPU ホストワーカー。
+    job_runner: str = "docker"
+    # AutoE2E（Autoware auto_e2e）オフロード微調整。GPU が要るのでホストワーカーが回す。
+    autoe2e_python: str = ""  # 空なら <AUTOWARE_E2E_ROOT>/.venv-autoe2e の python
+    autoe2e_rig: str = ""  # 空なら <AUTOWARE_E2E_ROOT>/config/rosbag2_autoe2e/rig.yaml
+    autoe2e_epochs: int = 3
+    autoe2e_stride: int = 5
+    autoe2e_accum_steps: int = 8
+    autoe2e_extra_args: str = ""  # 例: "--max-train-samples 200 --val-scenes S1"
 
     @property
     def inbox_path(self) -> Path:

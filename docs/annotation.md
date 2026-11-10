@@ -2,6 +2,15 @@
 
 帰還 bag を ingest しただけでは教師がありません。四脚シミュとはここが違います。ツールは用途で分けます（`C:\Users\xeno1\Autoware_e2e\docs\reference\AUTO_ANNOTATION.md` と同じ分担）。
 
+ポータルでは:
+
+| 工程 | ツール |
+|------|--------|
+| **工程5** `annotate` | **Label Studio**（画像）/ **SALT**（点群）/ SAM（CLI） |
+| **工程6** `label_review` | **Xtreme1**（カメラと点群の突き合わせ確認。Freespace マスクには使わない） |
+
+E2E（cmd_vel 教師）は工程5–6をスキップ可。知覚・検出は不可。工程定義は [pipeline-stages.md](pipeline-stages.md)。
+
 | 何を付けるか | ツール | 場所 |
 |--------------|--------|------|
 | 画像クラス `clear` / `obstacle` / `person` | **Label Studio** | 本 compose `:8081`。ingest が import |
@@ -10,15 +19,14 @@
 | LiDAR 点の semantic | **SALT GUI** | WSL。`SALT/bin/SALT` |
 | カメラと点群の突き合わせ | **Xtreme1** | `:8190`（Autoware の compose。Garage `:9000` と別。Xtreme1 の MinIO は `:8193`） |
 
-Xtreme1 の YOLOR は箱検出です。Freespace マスクには使いません。
-
 ---
 
-## 1. 画像クラス / bbox（毎回の主経路）
+## 1. 画像クラス / bbox（毎回の主経路・工程5）
 
-1. ingest する。カメラが Label Studio の `UGV-obstacle-cls` に入る。
-2. http://127.0.0.1:8081 に `admin@ugv.local` / `label_change_me` で入る。
-3. `POST /datasets/build` のとき Catalog が export して `annotation` に戻す。
+1. 工程3 ingest → 工程4 data_qa まで完了する。
+2. ポータル工程5でツール **Label Studio** を選び「作業データを出す」。投入失敗時はジョブが `failed` になる。
+3. http://127.0.0.1:8081 に `admin@ugv.local` / `label_change_me` で入る。
+4. `POST /datasets/build`（工程7）のとき Catalog が export して `annotation` に戻す。
 
 未ラベルのまま `obstacle_cls` / `detection` の版切りは失敗します。
 
@@ -48,21 +56,24 @@ python -m ugv_mlops.cli annotate-import-masks M-20260831-001
 
 ---
 
-## 3. LiDAR（SALT）
+## 3. LiDAR（SALT・工程5）
 
-1. `C:\Users\xeno1\Autoware_e2e\docs\reference\SALT_SETUP_WSL.md` で GUI を起動する。
-2. シーケンスを読み **SALT** で事前分割し、クラス色で塗る。
-3. 書き出した jsonl（各行 `sample_id` + `label_json`）を:
+1. ポータル工程5でツール **SALT**、ミッションを選び「SALT 用に点群を出す」。
+2. `C:\Users\xeno1\Autoware_e2e\docs\reference\SALT_SETUP_WSL.md` で GUI を起動する。
+3. `data/annotate/<mission_id>/lidar` の `.pcd` / `.bin` を読み、クラス色で塗る。
+4. 書き出した jsonl（各行 `sample_id` + `label_json`）を `data/annotate/<mission_id>/export.jsonl` に置き、工程5の「結果を Catalog に戻す」。
 
 ```powershell
-python -m ugv_mlops.cli annotate-import-jsonl path\to\salt.jsonl --tool salt
+python -m ugv_mlops.cli annotate-import-jsonl data/annotate/M-AVBAG-001/export.jsonl --tool salt
 ```
 
 点群原本は bag（Garage `raw`）。ingest の lidar はキーフレームメタです。
 
 ---
 
-## 4. 確認（Xtreme1）
+## 4. 確認（Xtreme1・工程6）
+
+ポータル工程6で「確認用データを出す」と、画像と点群を `data/annotate/<mission_id>/` に出し、http://127.0.0.1:8190 を開きます。確認後「確認完了として記録」（`POST /label-review`）。
 
 Autoware_e2e で:
 

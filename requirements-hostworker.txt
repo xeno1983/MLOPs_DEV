@@ -1,0 +1,13 @@
+# GPU ホストワーカー（python -m ugv_mlops.host_worker）用。compose の外の Windows ホストで動く。
+# 学習そのもの（torch / timm 等）は Autoware_e2e/.venv-autoe2e が持つ。ここは Catalog との連携だけ。
+sqlalchemy>=2.0.36
+psycopg[binary]>=3.2.0
+pydantic-settings>=2.6.0
+minio>=7.2.0
+boto3>=1.35.0
+httpx>=0.28.0
+pyyaml>=6.0.2
+numpy>=2.0.0
+pillow>=11.0.0
+rosbags>=0.10.0
+mlflow-skinny>=2.19.0

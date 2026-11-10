@@ -107,3 +107,46 @@ def run_yolox_demo(max_images: int = 48) -> dict:
     result["packaged"] = packaged
     result["sync"] = {"tx_id": sync["tx_id"], "chunks": len(chunks), "final": chunks[-1] if chunks else None}
     return result
+
+
+def run_av_rosbag_demo(max_seconds: float = 12.0) -> dict:
+    """Public CostNav rosbag2: ingest → E2E dataset → train → gate → package → sync."""
+    ensure_signing_keys()
+    from ugv_mlops.av_rosbag_sample import MISSION_ID, prepare_av_rosbag
+    from ugv_mlops.ingest import ingest_path
+    from ugv_mlops.package import build_update_package
+    from ugv_mlops.sync import enqueue_sync, send_chunk
+    from ugv_mlops.train import train_from_dataset
+
+    prepared = prepare_av_rosbag(settings.inbox_path / MISSION_ID, max_seconds=max_seconds)
+    ingested = ingest_path(settings.inbox_path / MISSION_ID, source_type="costnav_rosbag2")
+    dataset = build_dataset(
+        "ds-av-rosbag",
+        "CostNav public rosbag2 E2E sample",
+        task="e2e",
+        mission_id=MISSION_ID,
+    )
+    trained = train_from_dataset(dataset["dataset_version_id"], settings.default_learning_stage)
+    gated = evaluate_and_promote(trained["run_id"], gate_name="smoke", target_status="staging")
+    result = {
+        "ok": bool(gated.get("passed")),
+        "prepared": prepared,
+        "ingested": {k: ingested.get(k) for k in ("mission_id", "files_count", "modalities")},
+        "dataset": dataset,
+        "trained": {"run_id": trained["run_id"], "metrics": trained["metrics"]},
+        "gated": gated,
+    }
+    if not gated.get("passed"):
+        return result
+    packaged = build_update_package(gated["model_id"], target_stage="S3")
+    sync = enqueue_sync(packaged["package_id"], "UGV-01")
+    chunks = []
+    while True:
+        step = send_chunk(sync["tx_id"], max_bytes=65536)
+        chunks.append(step)
+        if step["done"] or len(chunks) > 10_000:
+            break
+    result["ok"] = True
+    result["packaged"] = packaged
+    result["sync"] = {"tx_id": sync["tx_id"], "chunks": len(chunks), "final": chunks[-1] if chunks else None}
+    return result

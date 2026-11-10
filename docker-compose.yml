@@ -236,6 +236,13 @@ services:
       ANNOTATE_DIR: /data/annotate
       AUTOWARE_E2E_ROOT: /autoware_e2e
       XTREME1_URL: ${XTREME1_URL:-http://host.docker.internal:8190}
+      CARLA_ROOT: ${CARLA_ROOT:-/home/xeno1/CARLA}
+      CARLA_LAUNCH_MODE: ${CARLA_LAUNCH_MODE:-wsl}
+      CARLA_HOST: ${CARLA_HOST:-127.0.0.1}
+      CARLA_PORT: ${CARLA_PORT:-2000}
+      CARLA_PROBE_HOST: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data/inbox:/data/inbox
       - ./data/work:/data/work
@@ -244,6 +251,7 @@ services:
       - ./src:/app/src:ro
       - ./:/app/repo
       - ./data/annotate:/data/annotate
+      - ./data/cache:/data/cache
       - ${AUTOWARE_E2E_ROOT:-./data/autoware_stub}:/autoware_e2e:ro
     ports:
       - "8000:8000"

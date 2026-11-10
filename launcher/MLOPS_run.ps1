@@ -166,6 +166,12 @@ function Start-Stack([switch]$Full) {
         docker compose ps
     }
     Start-Xtreme1
+    # ポータル工程1の CARLA 起動用（Catalog は Docker 内のためホストで CarlaUE4 を起動）
+    $agent = Join-Path $Root "scripts\carla-host-agent.ps1"
+    if (Test-Path $agent) {
+        Write-Host "CARLA host agent を別ウィンドウで起動します（工程1で必要）…"
+        Start-Process powershell -ArgumentList @("-NoExit", "-ExecutionPolicy", "Bypass", "-File", $agent) -WindowStyle Normal
+    }
 }
 
 function Show-Status {
@@ -203,13 +209,15 @@ function Show-Status {
 function Run-Demo {
     Write-Host ""
     Write-Host "  1  知覚分類デモ"
-    Write-Host "  2  E2E デモ"
+    Write-Host "  2  E2E デモ（合成）"
     Write-Host "  3  YOLOX デモ（初回は数分）"
+    Write-Host "  4  rosbag2 デモ（CostNav 公開 bag、初回は取得あり）"
     $pick = Read-Host "番号 [1]"
     if ([string]::IsNullOrWhiteSpace($pick)) { $pick = "1" }
     $path = switch ($pick) {
         "2" { "/demo-e2e" }
         "3" { "/demo-yolox" }
+        "4" { "/demo-rosbag" }
         default { "/demo" }
     }
     try {
@@ -378,6 +386,75 @@ function Show-Dvc {
     }
 }
 
+function Show-Carla {
+    Write-Host ""
+    Write-Host " CARLA（compose 外。起動は host / WSL。詳細 docs/carla.md）"
+    Write-Host "  0  初回準備 setup-carla.ps1（-Download は大きい）"
+    Write-Host "  1  状態 GET /carla/status"
+    Write-Host "  2  bag 一覧 GET /carla/bags"
+    Write-Host "  3  inbox へ取込 POST /carla/import"
+    Write-Host "  4  録画コマンドヒント"
+    Write-Host "  5  CARLA 起動（host job / ローカルスクリプト）"
+    Write-Host "  6  mining_sim 起動"
+    Write-Host "  7  停止"
+    Write-Host "  8  ローカル直接起動 scripts/carla-launch.ps1"
+    $pick = Read-Host "番号"
+    switch ($pick) {
+        "0" {
+            $dl = Read-Host "本体をダウンロードする? (y/N)"
+            if ($dl -match '^[yY]') {
+                & (Join-Path $Root "scripts\setup-carla.ps1") -Download
+            } else {
+                & (Join-Path $Root "scripts\setup-carla.ps1")
+            }
+        }
+        "1" {
+            try { Write-Host ((Catalog-Get "/carla/status") | ConvertTo-Json -Depth 6) }
+            catch { Write-Host $_ }
+        }
+        "2" {
+            try { Write-Host ((Catalog-Get "/carla/bags") | ConvertTo-Json -Depth 6) }
+            catch { Write-Host $_ }
+        }
+        "3" {
+            $src = Read-Host "source（carla-bags の relpath または絶対パス）"
+            if ([string]::IsNullOrWhiteSpace($src)) { return }
+            $mid = Read-Host "mission_id（空可）"
+            $body = @{ source = $src }
+            if (-not [string]::IsNullOrWhiteSpace($mid)) { $body.mission_id = $mid }
+            $res = Catalog-Post "/carla/import" $body
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) { Wait-Job $res.job_id 120 | Out-Null }
+        }
+        "4" {
+            try { Write-Host ((Catalog-Get "/carla/record-hint") | ConvertTo-Json -Depth 4) }
+            catch { Write-Host $_ }
+        }
+        "5" {
+            $res = Catalog-Post "/carla/launch" @{ components = @("server"); wait_ready_sec = 45 }
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) {
+                Write-Host "host worker が必要です（MLOPS_gpu_worker.bat）。ジョブ待ち…"
+                Wait-Job $res.job_id 180 | Out-Null
+            }
+        }
+        "6" {
+            $res = Catalog-Post "/carla/launch" @{ components = @("mining_sim") }
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) { Wait-Job $res.job_id 120 | Out-Null }
+        }
+        "7" {
+            $res = Catalog-Post "/carla/stop" @{ components = @("server", "mining_sim") }
+            Write-Host ($res | ConvertTo-Json -Depth 5)
+            if ($res.job_id) { Wait-Job $res.job_id 60 | Out-Null }
+        }
+        "8" {
+            & (Join-Path $Root "scripts\carla-launch.ps1") -Component stack
+        }
+        default { Write-Host "キャンセル" }
+    }
+}
+
 while ($true) {
     Write-Host ""
     Write-Host " UGV MLOps"
@@ -392,6 +469,8 @@ while ($true) {
     Write-Host "  7  拡張起動（LakeFS / Gitea / Grafana）"
     Write-Host "  8  スタック停止（データは残る）"
     Write-Host "  9  終了"
+    Write-Host "  c  CARLA → inbox（bag 一覧 / 取込）"
+    Write-Host "  r  スクリプト / ROS 2（WSL・別メニュー）"
     Write-Host ""
     $choice = Read-Host "番号"
     try {
@@ -410,7 +489,21 @@ while ($true) {
                 Pause-Menu
             }
             "9" { exit 0 }
-            default { Write-Host "1〜9 を入力してください。" }
+            "c" { Show-Carla; Pause-Menu }
+            "C" { Show-Carla; Pause-Menu }
+            "r" {
+                $ros2 = Join-Path $PSScriptRoot "MLOPS_ros2.bat"
+                Start-Process -FilePath $ros2
+                Write-Host "ROS2 メニューを別窓で開きました。"
+                Pause-Menu
+            }
+            "R" {
+                $ros2 = Join-Path $PSScriptRoot "MLOPS_ros2.bat"
+                Start-Process -FilePath $ros2
+                Write-Host "ROS2 メニューを別窓で開きました。"
+                Pause-Menu
+            }
+            default { Write-Host "1〜9 / c / r を入力してください。" }
         }
     } catch {
         Write-Host $_
