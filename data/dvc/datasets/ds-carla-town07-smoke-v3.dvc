@@ -1,0 +1,6 @@
+outs:
+- md5: 8c73371af471f51ab10378cd8cb2210d.dir
+  size: 243831
+  nfiles: 4
+  hash: md5
+  path: ds-carla-town07-smoke-v3
