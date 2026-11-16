@@ -217,8 +217,17 @@ def _sklearn_to_onnx(raw: bytes) -> bytes:
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "m.joblib"
         path.write_bytes(raw)
-        model = joblib.load(path)
-        n = int(getattr(model, "n_features_in_", 32) or 32)
+        obj = joblib.load(path)
+        # train.py は {"model": Pipeline, "classes": [...]} で保存する
+        model = obj["model"] if isinstance(obj, dict) and "model" in obj else obj
+        n = int(getattr(model, "n_features_in_", 0) or 0)
+        if n <= 0 and hasattr(model, "named_steps"):
+            for step in model.named_steps.values():
+                n = int(getattr(step, "n_features_in_", 0) or 0)
+                if n > 0:
+                    break
+        if n <= 0:
+            n = 32
         onx = convert_sklearn(model, initial_types=[("input", FloatTensorType([None, n]))])
         data = onx.SerializeToString()
         if not data:

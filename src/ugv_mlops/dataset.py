@@ -73,16 +73,18 @@ def build_dataset(
         if mission_id:
             mission_filter = " AND s.mission_id = :mid"
             params["mid"] = mission_id
+        # 同一 sample に複数 class ラベルがあっても最新1件だけ使う
         rows = conn.execute(
             text(
                 f"""
-                SELECT s.sample_id, s.object_uri, s.modality, a.label_json
+                SELECT DISTINCT ON (s.sample_id)
+                       s.sample_id, s.object_uri, s.modality, a.label_json
                 FROM learning_sample s
                 JOIN annotation a ON a.sample_id = s.sample_id
                 WHERE a.label_type = 'class'
                   AND (s.declassified = TRUE OR s.classification = 'UNCLASSIFIED')
                   {mission_filter}
-                ORDER BY s.sample_id
+                ORDER BY s.sample_id, a.ts DESC, a.annotation_id DESC
                 """
             ),
             params,
@@ -107,18 +109,26 @@ def build_dataset(
 
     version = next_version(dataset_id)
     version_id = f"{dataset_id}-v{version}"
-    items = []
-    for idx, row in enumerate(rows):
-        split = _split(idx, len(rows), train_ratio, val_ratio)
+    labeled_rows: list[tuple[dict, str]] = []
+    for row in rows:
         label = row["label_json"].get("class") if isinstance(row["label_json"], dict) else None
         if label is None:
             continue
-        split_dir = work / split / str(label)
-        split_dir.mkdir(parents=True, exist_ok=True)
-        bucket, key = parse_s3_uri(row["object_uri"])
-        dest = split_dir / f"{row['sample_id']}.jpg"
-        storage.get_file(bucket, key, dest)
-        items.append((row["sample_id"], split, label))
+        labeled_rows.append((row, str(label)))
+    # クラスごとに層化。少数サンプルでも train に全クラスが残るようにする。
+    by_class: dict[str, list[dict]] = {}
+    for row, label in labeled_rows:
+        by_class.setdefault(label, []).append(row)
+    items = []
+    for label, group in by_class.items():
+        for idx, row in enumerate(group):
+            split = _split_stratified(idx, len(group), train_ratio, val_ratio)
+            split_dir = work / split / label
+            split_dir.mkdir(parents=True, exist_ok=True)
+            bucket, key = parse_s3_uri(row["object_uri"])
+            dest = split_dir / f"{row['sample_id']}.jpg"
+            storage.get_file(bucket, key, dest)
+            items.append((row["sample_id"], split, label))
 
     stats = {
         "n": len(items),
@@ -191,3 +201,12 @@ def _split(idx: int, n: int, train_ratio: float, val_ratio: float) -> str:
     if idx < cut_val:
         return "val"
     return "test"
+
+
+def _split_stratified(idx: int, n_in_class: int, train_ratio: float, val_ratio: float) -> str:
+    """同一クラス内での分割。1件しか無いクラスは必ず train。"""
+    if n_in_class <= 1:
+        return "train"
+    if n_in_class == 2:
+        return "train" if idx == 0 else "test"
+    return _split(idx, n_in_class, train_ratio, val_ratio)

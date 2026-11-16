@@ -1,0 +1,281 @@
+# UGV MLOps 進捗正本（ガントは docs/gantt.md）
+# 更新ルール: 状態を変えたら updated と evidence を直し、gantt.md の表・Mermaid を同期する。
+# status: planned | in_progress | blocked | done | deferred
+# v_layer: 要求 | 設計 | 実装 | 単体 | 結合 | システム | 受入
+
+updated: "2026-11-14T14:40"
+baseline_start: "2026-10-20"
+baseline_end: "2026-12-19"
+owner_default: "on-prem"
+
+milestones:
+  - id: M1
+    title: 取得系（工程1–4）結合試験合格
+    date: "2026-11-09"
+    status: done
+    evidence: "Town07 bag → POST /carla/import → /ingest → /data-qa passed"
+  - id: M2
+    title: 取得系安定化（MLflow/DVC/LS/import UX）
+    date: "2026-11-10"
+    status: done
+    evidence: "O1 LS Cookie auth+project; O2 dvc push *.dvc; O3 import by bag name"
+  - id: M3
+    title: 教師系（工程5–6）結合試験
+    date: "2026-11-10"
+    status: done
+    evidence: "annotate/init pushed=2; smoke labels; label-review passed labeled=2"
+  - id: M4
+    title: 学習系（工程7–9）結合試験
+    date: "2026-11-10"
+    status: done
+    evidence: "ds-carla-town07-smoke-v3 → train S3 run 70c9d2d1… → gate smoke passed → mdl_70c9d2d1556e"
+  - id: M5
+    title: 配備系（工程10–11）＋受入スモーク
+    date: "2026-11-10"
+    status: done
+    evidence: "lighten onnx mdl_26a1a3f71aa6 → pkg_583f6b9e… → sync UGV-01 inbox done"
+
+workstreams:
+  - id: WS-REQ
+    title: 要求・工程定義
+    v_layer: 要求
+    start: "2026-10-20"
+    end: "2026-11-05"
+    status: done
+    progress: 100
+    notes: "11工程・スキップ規則・公開入口（Town07）固定"
+
+  - id: WS-DES
+    title: システム／モジュール設計・IF
+    v_layer: 設計
+    start: "2026-10-27"
+    end: "2026-11-09"
+    status: done
+    progress: 100
+    notes: "design.md / diagrams.md / carla.md / E1–E6・I1–I8"
+
+  - id: WS-IMP-ACQ
+    title: 取得実装（CARLA offroad・bag・Catalog）
+    v_layer: 実装
+    start: "2026-11-01"
+    end: "2026-11-09"
+    status: done
+    progress: 100
+    notes: "carla_offroad_collect / import / ingest / data-qa"
+
+  - id: WS-IT-ACQ
+    title: 取得結合試験（工程1–4）
+    v_layer: 結合
+    start: "2026-11-08"
+    end: "2026-11-09"
+    status: done
+    progress: 100
+    notes: "flow_20261109_165800 → M-CARLA-… data-qa passed=true"
+
+  - id: WS-FIX
+    title: 取得系欠陥修正
+    v_layer: 結合
+    start: "2026-11-09"
+    end: "2026-11-10"
+    status: done
+    progress: 100
+    notes: "MLflow SA pin / DVC *.dvc push / LS Cookie auth / bag名 import 再検証OK"
+
+  - id: WS-IT-LBL
+    title: 教師結合試験（工程5–6）
+    v_layer: 結合
+    start: "2026-11-10"
+    end: "2026-11-10"
+    status: done
+    progress: 100
+    notes: "annotate/init→LS push→smoke label→pull→label-review passed"
+
+  - id: WS-IT-E2E
+    title: E2E/AutoE2E ショートカット検証
+    v_layer: 結合
+    start: "2026-11-14"
+    end: "2026-11-14"
+    status: done
+    progress: 100
+    notes: "AutoE2E + 古典 E2E + CARLA live smoke（M-CARLA-LIVE-20261114 import→ingest→qa）"
+
+  - id: WS-IT-LRN
+    title: 学習結合試験（工程7–9）
+    v_layer: 結合
+    start: "2026-11-10"
+    end: "2026-11-10"
+    status: done
+    progress: 100
+    notes: "層化分割修正後 v3 train+gate smoke passed（model mdl_70c9d2d1556e）"
+
+  - id: WS-IT-DEP
+    title: 配備結合試験（工程10–11）
+    v_layer: 結合
+    start: "2026-11-10"
+    end: "2026-11-10"
+    status: done
+    progress: 100
+    notes: "onnx lighten + package + sync/chunk → data/work/vehicles/UGV-01/inbox"
+
+  - id: WS-ACC
+    title: システム／受入スモーク
+    v_layer: 受入
+    start: "2026-11-10"
+    end: "2026-12-19"
+    status: in_progress
+    progress: 96
+    notes: "Town07 1–11 + Seaweed/LakeFS P4 + AutoE2E/古典E2E + CARLA live smoke + O7。残り受入仕上げ・任意 CostNav 公開袋"
+
+  - id: WS-STOR
+    title: SeaweedFS + LakeFS 移行
+    v_layer: 実装
+    start: "2026-11-14"
+    end: "2026-11-14"
+    status: done
+    progress: 100
+    notes: "P4 完了: LAKEFS_REQUIRED=true、dvc_sync/Garage/*.dvc 削除、portal Seaweed+LakeFS"
+
+stages:
+  - n: 1
+    id: sim_generate
+    title: シミュでデータを作る
+    status: done
+    verified: "2026-11-09"
+  - n: 2
+    id: collect
+    title: 帰還／シミュ結果を置く
+    status: done
+    verified: "2026-11-09"
+  - n: 3
+    id: ingest
+    title: カタログへ取り込む
+    status: done
+    verified: "2026-11-09"
+  - n: 4
+    id: data_qa
+    title: 取込データを確認する
+    status: done
+    verified: "2026-11-09"
+  - n: 5
+    id: annotate
+    title: ラベルを付ける
+    status: done
+    verified: "2026-11-10"
+  - n: 6
+    id: label_review
+    title: ラベル確認
+    status: done
+    verified: "2026-11-10"
+  - n: 7
+    id: dataset
+    title: データセット版切り
+    status: done
+    verified: "2026-11-10"
+  - n: 8
+    id: train
+    title: 学習
+    status: done
+    verified: "2026-11-10"
+  - n: 9
+    id: gate
+    title: ゲート
+    status: done
+    verified: "2026-11-10"
+  - n: 10
+    id: lighten
+    title: 軽量化
+    status: done
+    verified: "2026-11-10"
+  - n: 11
+    id: package_sync
+    title: 梱包・UGV同期
+    status: done
+    verified: "2026-11-10"
+
+open_items:
+  - id: O1
+    title: Label Studio 認証のワーカー再検証
+    priority: P0
+    status: done
+    due: "2026-11-11"
+    related: WS-FIX
+  - id: O2
+    title: DVC push（*.dvc）実機再確認
+    priority: P1
+    status: done
+    due: "2026-11-11"
+    related: WS-FIX
+  - id: O3
+    title: carla import の bag 名解決を API 経由で確認
+    priority: P1
+    status: done
+    due: "2026-11-11"
+    related: WS-FIX
+  - id: O4
+    title: cmd_vel 付き収集 or CostNav で E2E 経路
+    priority: P1
+    status: done
+    due: "2026-11-28"
+    related: WS-IT-E2E
+    evidence: "demo-e2e M-E2E-001 → ds-e2e-demo-v4 → run 68bc49fc… mae_steer 0.0036 → gate staging mdl_68bc49fc2f3e (+ LakeFS)"
+  - id: O12
+    title: AutoE2E 合成デモ ingest→dataset→train→gate
+    priority: P0
+    status: done
+    due: "2026-11-14"
+    related: WS-IT-E2E
+    evidence: "M-AUTOE2E-DEMO → ds-autoe2e-demo-v2 → run 30124649754b… ADE 0.433 < parent/cv → gate staging mdl_30124649754b"
+  - id: O13
+    title: CARLA ライブ録画→import→ingest→data-qa
+    priority: P1
+    status: done
+    due: "2026-11-14"
+    related: WS-IT-ACQ
+    evidence: "offscreen UE4 :2000; _smoke_collect Town07 smoke_20261114_143755 → M-CARLA-LIVE-20261114 → LakeFS + data-qa passed"
+  - id: O5
+    title: 工程5–11 の結合試験計画を具体化
+    priority: P2
+    status: done
+    due: "2026-11-14"
+    related: WS-IT-LBL
+  - id: O6
+    title: 工程10 lighten / 工程11 package+sync
+    priority: P0
+    status: done
+    due: "2026-11-12"
+    related: WS-IT-DEP
+  - id: O7
+    title: train stage=smoke を拒否（学習段は S0–S4 のみ）
+    priority: P2
+    status: done
+    due: "2026-11-14"
+    related: WS-IT-LRN
+    evidence: "stages.assert_learning_stage; train/e2e/yolox/autoe2e 入口で smoke/staging 拒否"
+  - id: O8
+    title: worker イメージに skl2onnx/onnx を恒久同梱（再ビルド）
+    priority: P1
+    status: done
+    due: "2026-11-14"
+    related: WS-IT-DEP
+    evidence: "rebuild worker; skl2onnx 1.20 / onnx 1.23; lighten mdl_d7c5f2f274c4.onnx → pkg_aada7fadab83b2ea"
+  - id: O9
+    title: SeaweedFS all-in-one + LakeFS 中核（P1–P3）
+    priority: P0
+    status: done
+    due: "2026-11-14"
+    related: WS-STOR
+    evidence: "put/get raw; lakefs-init; commit M-SEAWEED-SMOKE + ds-smoke-p3"
+  - id: O10
+    title: P4 LakeFS fail-closed + DVC/Garage 残骸削除
+    priority: P1
+    status: done
+    due: "2026-11-14"
+    related: WS-STOR
+    evidence: "LAKEFS_REQUIRED=true; dvc_sync/garage_init/*.dvc removed; portal CORE seaweed+lakefs"
+  - id: O11
+    title: CLI/API LakeFS 揃え + 短 ingest→dataset→train
+    priority: P0
+    status: done
+    due: "2026-11-14"
+    related: WS-STOR
+    evidence: "lakefs-status/publish; /lakefs; M-SEAWEED-SMOKE-E2E → ds-seaweed-smoke-v1 → run 2df0c36e… artifact s3://models"

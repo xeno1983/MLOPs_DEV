@@ -65,6 +65,16 @@ function Start-MiningSim {
     & (Join-Path $Root "scripts\carla-launch.ps1") -Component mining_sim
 }
 
+function Start-OffroadCollect {
+    $setup = Join-Path $Root "scripts\setup-carla-offroad.ps1"
+    $start = Join-Path $Root "scripts\start-carla-offroad.ps1"
+    $need = Read-Host "初回セットアップも実行する? (y/N)"
+    if ($need -match '^[yY]') {
+        & $setup
+    }
+    & $start
+}
+
 function Start-OdomBridge {
     & (Join-Path $Root "launcher\ros2\start-odom-bridge.ps1") -NoPause
 }
@@ -163,6 +173,7 @@ while ($true) {
     Write-Host "  2  CARLA 起動（WSL）"
     Write-Host "  3  CARLA host agent"
     Write-Host "  4  mining_sim 起動"
+    Write-Host "  o  オフロード走行+録画（Mine_01 / WASD / B=bag）"
     Write-Host "  5  odom bridge（ROS2 ノード）"
     Write-Host "  6  AutoE2E bag 録画（odom+ros2 bag record）"
     Write-Host "  7  AutoE2E 推論ノード（Autoware ROS2）"
@@ -183,6 +194,8 @@ while ($true) {
             "2" { Start-CarlaServer; Pause-Menu }
             "3" { Start-HostAgent; Pause-Menu }
             "4" { Start-MiningSim; Pause-Menu }
+            "o" { Start-OffroadCollect; Pause-Menu }
+            "O" { Start-OffroadCollect; Pause-Menu }
             "5" { Start-OdomBridge; Pause-Menu }
             "6" { Start-BagRecord; Pause-Menu }
             "7" { Start-AutoE2eNode; Pause-Menu }

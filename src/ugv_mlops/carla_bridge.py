@@ -1,8 +1,8 @@
 """CARLA / Autoware_e2e 連動（compose 外）。
 
-契約: シミュはホスト/WSL の CARLA + Autoware_e2e で録り、成果 rosbag2 を
-data/inbox/<mission>/ へ載せる。起動は carla_launch（host worker / CLI）経由。
-Catalog コンテナ自体は CarlaUE4 を抱えない。
+契約: シミュはホスト/WSL の CARLA で録り、成果 rosbag2 を data/inbox/<mission>/ へ載せる。
+録画の既定は scripts/start-carla-offroad.ps1（ROS 無し）。代替が mining_sim + ros2 bag。
+起動 API は carla_launch（host worker / CLI）。Catalog コンテナは CarlaUE4 を抱えない。
 """
 from __future__ import annotations
 
@@ -69,20 +69,21 @@ def status() -> dict:
         "bags_preview": (bags.get("bags") or [])[:5],
         "launch": launch_info,
         "howto": howto(),
-        "next": "録った bag を POST /carla/import で inbox へ。その後工程3 ingest。",
+        "next": "start-carla-offroad.ps1 で録画 → POST /carla/import → 工程3 ingest。",
+        "preferred_record": "scripts/start-carla-offroad.ps1",
     }
 
 
 def howto() -> list[str]:
     root = resolve_autoware_root()
     return [
-        "1. ポータル／CLI／ランチャーで CARLA を起動（compose 外・host worker 可）。",
-        "2. mining_sim.py --sync（同 UI の「mining_sim 起動」または手動）。",
-        "3. ros2 bag record でカメラ・odometry・（可能なら）cmd_vel/ackermann を録る。",
+        "1. 【推奨】.\\scripts\\start-carla-offroad.ps1（CARLA + WASD + B で rosbag2。ROS 不要）。",
+        "2. 初回のみ .\\scripts\\setup-carla-offroad.ps1（Python3.10 venv + carla-0-9-15）。",
+        "3. 代替: CARLA 起動 → mining_sim → ros2 bag record（Jazzy 同居に注意）。",
         f"4. 出力先の例: {root / 'datasets' / 'carla_bags' / '<run_id>'}",
         "5. ポータル工程1または POST /carla/import で data/inbox/<mission>/ へ取り込む。",
-        "6. 工程3 ingest → 工程4 data_qa。E2E なら工程5–6スキップ可。知覚はラベル必須。",
-        "詳細: Autoware_e2e/OFFROAD_CARLA_HYBRID.md と docs/carla.md",
+        "6. 工程3 ingest → 工程4 data_qa。E2E/AutoE2E なら工程5–6スキップ可。知覚はラベル必須。",
+        "詳細: docs/carla.md / docs/diagrams.md",
     ]
 
 
@@ -189,7 +190,20 @@ def import_bag_to_inbox(
         "classification": "UNCLASSIFIED",
         "started_ts": datetime.now(timezone.utc).isoformat(),
         "theater": "carla",
-        "sensors": ["camera_front", "odometry"],
+        "sensors": [
+            "camera_front",
+            "camera_front_left",
+            "camera_front_right",
+            "camera_rear",
+            "camera_left",
+            "camera_right",
+            "lidar_top",
+            "lidar_front",
+            "lidar_rear",
+            "gnss",
+            "imu",
+            "odometry",
+        ],
         "source": "carla",
         "source_path": str(src),
         "autoware_e2e_root": str(root),
@@ -239,15 +253,42 @@ def ack_sim_generate(note: str = "", mission_id: str | None = None) -> dict:
 def _resolve_source(source: str, root: Path) -> Path:
     raw = (source or "").strip().replace("\\", "/")
     if not raw:
-        raise ValueError("source が空です（list_bags の relpath か絶対パス）")
+        raise ValueError("source が空です（list_bags の name / relpath か絶対パス）")
     p = Path(raw)
     if p.is_absolute() and p.exists():
         _assert_allowed(p, root)
         return p
     # relpath from autoware root
     cand = (root / raw).resolve()
-    _assert_allowed(cand, root)
-    return cand
+    if cand.exists():
+        _assert_allowed(cand, root)
+        return cand
+    # bag 名だけ（list_bags の name）でも root 配下から解決する
+    if "/" not in raw and "\\" not in raw:
+        matches: list[Path] = []
+        for base_rel in BAG_SEARCH_RELS:
+            base = root / base_rel
+            if not base.is_dir():
+                continue
+            for meta in base.rglob("metadata.yaml"):
+                if meta.parent.name == raw:
+                    matches.append(meta.parent.resolve())
+        # 重複排除（同一パス）
+        uniq: list[Path] = []
+        seen: set[str] = set()
+        for m in matches:
+            key = str(m)
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(m)
+        if len(uniq) == 1:
+            _assert_allowed(uniq[0], root)
+            return uniq[0]
+        if len(uniq) > 1:
+            opts = ", ".join(str(m) for m in uniq[:8])
+            raise FileNotFoundError(f"bag 名が複数一致: {raw} → {opts}")
+    raise FileNotFoundError(f"source not found: {cand}")
 
 
 def _assert_allowed(path: Path, root: Path) -> None:
@@ -301,10 +342,17 @@ def _looks_like_bag(folder: Path) -> bool:
 
 
 def record_command_hint(out_name: str = "mine_001") -> dict:
-    """ros2 bag record のコピペ用（ホスト WSL で実行）。AutoE2E 向けを既定にする。"""
+    """録画手順ヒント。既定は ROS 無し offroad collect。代替に ros2 bag record。"""
     root = resolve_autoware_root()
     out = root / "datasets" / "carla_bags" / out_name
     cmd = (
+        "# === 推奨: ROS 無しオフロード収集（WASD / B=録画）===\n"
+        ".\\scripts\\setup-carla-offroad.ps1   # 初回のみ\n"
+        ".\\scripts\\start-carla-offroad.ps1   # Town01 + Cybertruck + multi-sensor\n"
+        "# bag → Autoware_e2e\\datasets\\carla_bags\\<run_id>\\\n"
+        "# トピック: /carla/ego_vehicle/{rgb/image,odometry,speed}\n"
+        "\n"
+        "# === 代替: mining_sim + ROS2 bag record ===\n"
         "# 1) CARLA + mining_sim 起動後、odom bridge（別ターミナル）:\n"
         "#    python3 /mnt/c/Users/xeno1/MLOPS/scripts/carla-odom-bridge.py\n"
         "# 2) 録画:\n"
@@ -317,13 +365,14 @@ def record_command_hint(out_name: str = "mine_001") -> dict:
         "# または: bash /mnt/c/Users/xeno1/MLOPS/scripts/carla-autoe2e-record.sh " + out_name
     )
     return {
-        "shell": "bash (WSL / Linux)",
+        "shell": "PowerShell (推奨) / bash WSL (ROS 代替)",
         "output_dir": str(out),
         "command": cmd,
+        "preferred": "start-carla-offroad.ps1",
         "rig": "config/rosbag2_autoe2e/rig.carla.yaml（fill_missing_slots=front）",
         "note": (
-            "mining_sim の画像トピックは /carla/ego_vehicle/rgb/image。"
-            "Odometry は carla-odom-bridge が /carla/ego_vehicle/odometry に出す。"
-            "取込後はポータル工程7 task=autoe2e + GPU host worker。"
+            "推奨は carla_offroad_collect（carla-0-9-15 / py3.10）。"
+            "代替の mining_sim 経路では odom bridge が /carla/ego_vehicle/odometry を出す。"
+            "取込後 AutoE2E は工程7 task=autoe2e + GPU host worker。"
         ),
     }

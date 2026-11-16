@@ -557,13 +557,13 @@
       <section class="tools">
         <a class="t" href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer"><b>Catalog API</b><span>上級者向けの仕様（この画面から実行できます）</span></a>
         <a class="t" href="http://127.0.0.1:5000" target="_blank" rel="noreferrer"><b>MLflow</b><span>学習指標・実験</span></a>
-        <a class="t" href="http://127.0.0.1:9000" target="_blank" rel="noreferrer"><b>Garage S3</b><span>bag・センサ・データセット（コンソールなし）</span></a>
+        <a class="t" href="http://127.0.0.1:9000" target="_blank" rel="noreferrer"><b>SeaweedFS S3</b><span>bag・センサ・データセット（コンソールなし）</span></a>
+        <a class="t" href="http://127.0.0.1:8001" target="_blank" rel="noreferrer"><b>LakeFS</b><span>データ版（Git 風・中核）</span></a>
         <a class="t" href="http://127.0.0.1:8081" target="_blank" rel="noreferrer"><b>Label Studio</b><span>画像クラス / bbox（必須）</span></a>
         <a class="t" href="http://127.0.0.1:8190" target="_blank" rel="noreferrer"><b>Xtreme1</b><span>カメラと点群の確認（Autoware compose）</span></a>
       </section>
-      <p class="stamp">SALT は WSL GUI。DVC は ingest / データセット区切りで Garage へ。拡張は <code>--profile full</code>。</p>
+      <p class="stamp">SALT は WSL GUI。オブジェクトは SeaweedFS、データ版は LakeFS。拡張は <code>--profile full</code>。</p>
       <section class="tools" id="tools-full">
-        <a class="t" href="http://localhost:8001" target="_blank" rel="noreferrer"><b>LakeFS</b><span>データ版（Git 風・任意）</span></a>
         <a class="t" href="http://localhost:3000" target="_blank" rel="noreferrer"><b>Gitea</b><span>学習コード（任意）</span></a>
         <a class="t" href="http://localhost:3001" target="_blank" rel="noreferrer"><b>Grafana</b><span>監視（任意）</span></a>
       </section>
@@ -646,18 +646,17 @@
     const INTEG_NAMES = {
       catalog: "Catalog",
       postgres: "PostgreSQL",
-      garage: "Garage",
+      seaweed: "SeaweedFS",
       mlflow: "MLflow",
       labelstudio: "Label Studio",
-      dvc: "DVC",
+      lakefs: "LakeFS",
       salt: "SALT",
       xtreme1: "Xtreme1",
-      lakefs: "LakeFS",
       gitea: "Gitea",
       grafana: "Grafana",
       prometheus: "Prometheus",
     };
-    const CORE_TOOLS = ["catalog", "postgres", "garage", "mlflow", "labelstudio"];
+    const CORE_TOOLS = ["catalog", "postgres", "seaweed", "mlflow", "labelstudio", "lakefs"];
     const TASK_META = {
       obstacle_cls: { id: "ds-obstacle-01", name: "obstacle v1" },
       detection: { id: "ds-detect-01", name: "detection v1" },
@@ -1637,11 +1636,13 @@
       if (s.id === "sim_generate") {
         form =
           '<div class="form-grid">' +
-          "<p>CARLA は compose 外。ホスト／WSL で起動し、録った rosbag2 を inbox へ取り込みます。</p>" +
+          "<p><b>推奨:</b> ホストで <code>.\\scripts\\start-carla-offroad.ps1</code>（WASD / B=rosbag2、ROS 不要）。" +
+          "初回は <code>setup-carla-offroad.ps1</code>。Mine_01 未導入時は Town07。</p>" +
+          "<p class=\"muted\">代替: 下の CARLA / mining_sim 起動 + ROS2 bag record（host agent 要）。詳細 docs/carla.md</p>" +
           '<p id="act-carla-status" class="muted">CARLA / Autoware 状態を読み込み中…</p>' +
           '<div class="row" style="gap:8px;flex-wrap:wrap">' +
           '<button type="button" id="act-carla-start">CARLA 起動</button>' +
-          '<button type="button" class="secondary" id="act-carla-mining">mining_sim 起動</button>' +
+          '<button type="button" class="secondary" id="act-carla-mining">mining_sim（代替）</button>' +
           '<button type="button" class="secondary" id="act-carla-stack">CARLA+mining 一括</button>' +
           '<button type="button" class="secondary" id="act-carla-stop">停止</button>' +
           "</div>" +
@@ -1653,7 +1654,7 @@
           "<label>すでに inbox にあるミッション（確認のみ）</label>" +
           '<select id="act-inbox"><option value="">読み込み中…</option></select>' +
           '<button type="button" id="act-go">inbox の bag を確認した</button>' +
-          '<button type="button" class="secondary" id="act-carla-hint">録画コマンドを表示</button>' +
+          '<button type="button" class="secondary" id="act-carla-hint">録画ヒント（offroad / ROS）</button>' +
           '<button type="button" class="secondary" id="act-next">工程2（置く）へ / スキップ</button>' +
           '<pre id="act-carla-cmd" class="muted" style="white-space:pre-wrap;font-size:12px"></pre>' +
           "</div>";

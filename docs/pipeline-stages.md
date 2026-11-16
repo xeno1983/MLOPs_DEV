@@ -1,6 +1,6 @@
 # パイプライン工程（11）とツール連動
 
-ポータルの工程カードと Catalog の契約を固定する。起動・日常操作は [usage.md](usage.md)、**学習タスク一覧**は [tasks.md](tasks.md)、四脚との層対応は [workflow.md](workflow.md)、内部配線は [design.md](design.md)。
+ポータルの工程カードと Catalog の契約を固定する。起動・日常操作は [usage.md](usage.md)、**学習タスク一覧**は [tasks.md](tasks.md)、四脚との層対応は [workflow.md](workflow.md)、内部配線は [design.md](design.md)、**進捗ガント**は [gantt.md](gantt.md)。
 
 旧 8 工程（置く → 取込 → ラベル → 版切り → 学習 → ゲート → 梱包 → 同期）に、**シミュ生成・取込確認・ラベル確認・軽量化** を足した。
 
@@ -49,17 +49,17 @@ flowchart TB
 
 | # | id | タイトル | 主ツール | Catalog 契約 | 実処理 |
 |---|-----|----------|----------|--------------|--------|
-| 1 | `sim_generate` | シミュでデータを作る | Autoware_e2e / CARLA（compose 外・host 起動可） | `POST /carla/launch` → import → `POST /pipeline/sim-generate` | **mission_id + bag 実体**必須。失敗は工程を進めない |
+| 1 | `sim_generate` | シミュでデータを作る | Autoware_e2e / CARLA（compose 外）。**既定は** `start-carla-offroad.ps1`（ROS 無し WASD+bag）。代替: mining_sim + ros2 bag | `POST /carla/launch` → import → `POST /pipeline/sim-generate` | **mission_id + bag 実体**必須。失敗は工程を進めない。詳細 [carla.md](carla.md) |
 | 2 | `collect` | 帰還／シミュ結果を置く | `data/inbox` | ホスト FS | オペレータがコピー（API 書込なし） |
-| 3 | `ingest` | カタログへ取り込む | Catalog / Worker / Garage / DVC | `POST /ingest` | パース・Garage・DVC |
+| 3 | `ingest` | カタログへ取り込む | Catalog / Worker / SeaweedFS / LakeFS | `POST /ingest` | パース・SeaweedFS・LakeFS commit |
 | 4 | `data_qa` | 取込データを確認する | データタブ + preview | `POST /data-qa` | カメラ/action/件数検査。不合格はジョブ失敗 |
 | 5 | `annotate` | ラベルを付ける | Label Studio / SALT / SAM | `POST /annotate/init` | dump＋LS 投入（失敗はジョブ失敗）。E2E スキップ可 |
 | 6 | `label_review` | ラベル・センサを突き合わせ確認 | Xtreme1 `:8190` | `POST /label-review` | ラベル or cmd_vel 必須。監査 |
-| 7 | `dataset` | 学習用データセットを切る | Garage `datasets` | `POST /datasets/build` | 版切り（`mission_id` で絞り可） |
+| 7 | `dataset` | 学習用データセットを切る | SeaweedFS `datasets` + LakeFS | `POST /datasets/build` | 版切り（`mission_id` で絞り可） |
 | 8 | `train` | 学習する | MLflow + Worker | `POST /train` | 実学習 |
 | 9 | `gate` | 指標で通す | ゲート + 署名 | `POST /gate` | 指標＋**実サイズ**＋署名 |
 | 10 | `lighten` | モデルを軽量化する | Worker | `POST /models/export` | ONNX/adapter。失敗は偽成功しない。S1 は adapter 等 |
-| 11 | `package_sync` | 梱包して UGV へ同期 | Garage + chunk | `/packages` → `/sync` → `/chunk` | zip 作成後、`data/work/vehicles/<車両>/inbox/` へ実書き込み |
+| 11 | `package_sync` | 梱包して UGV へ同期 | SeaweedFS + chunk | `/packages` → `/sync` → `/chunk` | zip 作成後、`data/work/vehicles/<車両>/inbox/` へ実書き込み |
 
 ---
 
@@ -68,7 +68,7 @@ flowchart TB
 | 条件 | スキップしてよい工程 |
 |------|----------------------|
 | 実機帰還のみ（シミュなし） | 1 |
-| `task=e2e`（cmd_vel が教師） | 5, 6 |
+| `task=e2e`（cmd_vel が教師） / `task=autoe2e`（scene 切出し） | 5, 6 |
 | 成果物が既に `onnx` / `adapter` で対象段のサイズ制限内 | 10 |
 | 公開デモ（smoke） | 1 と、必要なら 10。ゲートは `smoke` |
 
@@ -89,21 +89,24 @@ flowchart LR
   subgraph core [本スタック]
     IN[inbox]
     CAT[Catalog_Worker]
-    GAR[Garage]
+    SW[SeaweedFS]
+    LK[LakeFS]
     LS[LabelStudio]
     MF[MLflow]
     PORT[Portal]
   end
   CARLA -->|rosbag2| IN
   IN --> CAT
-  CAT --> GAR
+  CAT --> SW
+  CAT -->|commit| LK
+  LK -->|blockstore| SW
   CAT --> LS
   CAT --> MF
   PORT --> CAT
   CAT -->|annotate_dump| SALT
   CAT -->|annotate_dump| XT
-  CAT -->|onnx_artifact| GAR
-  GAR -->|package_zip| CAT
+  CAT -->|onnx_artifact| SW
+  SW -->|package_zip| CAT
   CAT -->|chunk_sync| UGV[UGV]
   UGV -.->|optional| TRT
 ```
@@ -120,20 +123,21 @@ flowchart LR
 
 ## シミュ（工程1）の手順概要
 
-詳細は [carla.md](carla.md)。
+詳細は [carla.md](carla.md) / [diagrams.md](diagrams.md)。
 
-1. ポータル／CLI／ランチャーで CARLA + `mining_sim` を起動（`POST /carla/launch` → host worker。[carla.md](carla.md)）。rosbag2 を録る。出力例: `datasets/carla_bags/<run>/`。
-2. ポータル工程1で bag を選び「CARLA bag を inbox へ取り込む」（`POST /carla/import`）。または手動で `data/inbox/<mission>/` にコピー。
-3. 「inbox の bag を確認した」で監査。実機のみなら工程1スキップして工程2へ。
-4. 工程3 ingest 以降は実機帰還と同じ取込線。
+1. **推奨:** `.\scripts\start-carla-offroad.ps1`（初回は `setup-carla-offroad.ps1`）。WASD 走行、`B` で rosbag2。Mine_01 未導入時は Town07。
+2. **代替:** `POST /carla/launch`（host worker）で server / mining_sim → `ros2 bag record`。
+3. ポータル工程1で bag を選び「CARLA bag を inbox へ取り込む」（`POST /carla/import`）。または手動で `data/inbox/<mission>/` にコピー。
+4. 「inbox の bag を確認した」で監査。実機のみなら工程1スキップして工程2へ。
+5. 工程3 ingest 以降は実機帰還と同じ取込線。
 
-E2E なら bag に `/cmd_vel`（または同等の操作トピック）を含める。知覚なら工程5で人手ラベルが必要。
+E2E なら bag に `/cmd_vel`（または同等）を含める。AutoE2E 向けは image+odometry+speed で可。知覚なら工程5で人手ラベルが必要。
 
 ---
 
 ## 同期の置き場（工程11）
 
-Catalog は Garage の package zip を読み、チャンクごとにホスト側の車両 inbox へ書き込む（実車リンクの代わりのオンプレ配送バッファ）。
+Catalog は SeaweedFS の package zip を読み、チャンクごとにホスト側の車両 inbox へ書き込む（実車リンクの代わりのオンプレ配送バッファ）。
 
 ```
 data/work/vehicles/<vehicle_id>/inbox/<package_id>.zip

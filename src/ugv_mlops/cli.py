@@ -201,32 +201,36 @@ def bag_list_cmd() -> None:
     typer.echo(json.dumps(list_missions(), indent=2, default=str, ensure_ascii=False))
 
 
-@app.command("dvc-status")
-def dvc_status_cmd() -> None:
-    from ugv_mlops.dvc_sync import status as dvc_status
+@app.command("lakefs-status")
+def lakefs_status_cmd() -> None:
+    from ugv_mlops.bag_pipeline import list_missions
+    from ugv_mlops.lakefs_sync import status as lakefs_status
 
-    typer.echo(json.dumps(dvc_status(), indent=2, default=str, ensure_ascii=False))
+    st = lakefs_status()
+    st["missions"] = list_missions()
+    typer.echo(json.dumps(st, indent=2, default=str, ensure_ascii=False))
 
 
-@app.command("dvc-publish")
-def dvc_publish_cmd(
+@app.command("lakefs-publish")
+def lakefs_publish_cmd(
     mission_id: str = "",
     dataset_version_id: str = "",
     object_uri: str = "",
-    push: bool = True,
 ) -> None:
-    from ugv_mlops.dvc_sync import publish_dataset, publish_mission
+    """raw mission または dataset zip を LakeFS に commit（旧 dvc-publish）。"""
+    from ugv_mlops.lakefs_sync import commit_dataset_zip, commit_mission
 
     if dataset_version_id:
         if not object_uri:
             raise typer.BadParameter("dataset_version_id には object_uri が必要です")
-        result = publish_dataset(dataset_version_id, object_uri, push=push)
+        result = commit_dataset_zip(dataset_version_id, object_uri)
     elif mission_id:
-        result = publish_mission(mission_id, push=push)
+        result = commit_mission(mission_id)
     else:
         raise typer.BadParameter("mission_id か dataset_version_id を指定してください")
     typer.echo(json.dumps(result, indent=2, default=str, ensure_ascii=False))
     raise typer.Exit(0 if result.get("ok") else 1)
+
 
 
 @app.command("annotate-status")

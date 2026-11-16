@@ -26,10 +26,11 @@ $pgPass = Read-DotEnv "POSTGRES_PASSWORD"; if (-not $pgPass) { $pgPass = "ugv_ch
 $env:CATALOG_DATABASE_URL = "postgresql+psycopg://${pgUser}:${pgPass}@127.0.0.1:5432/catalog"
 $env:MINIO_ENDPOINT = "127.0.0.1:9000"
 $env:MINIO_SECURE = "false"
-$env:S3_REGION = "garage"
+$env:S3_REGION = "us-east-1"
 foreach ($k in @(
     "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "DEFAULT_LEARNING_STAGE", "AUTOWARE_E2E_ROOT",
-    "AUTOE2E_RIG", "AUTOE2E_PYTHON", "AUTOE2E_EPOCHS", "AUTOE2E_STRIDE", "AUTOE2E_ACCUM_STEPS", "AUTOE2E_EXTRA_ARGS"
+    "AUTOE2E_RIG", "AUTOE2E_PYTHON", "AUTOE2E_EPOCHS", "AUTOE2E_STRIDE", "AUTOE2E_ACCUM_STEPS", "AUTOE2E_EXTRA_ARGS",
+    "LAKEFS_ACCESS_KEY_ID", "LAKEFS_SECRET_ACCESS_KEY", "LAKEFS_REQUIRED"
 )) {
     $v = Read-DotEnv $k
     if ($v) { Set-Item -Path "Env:$k" -Value $v }
@@ -37,7 +38,8 @@ foreach ($k in @(
 $env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 $env:INBOX_DIR = (Join-Path $Root "data\inbox")
 $env:WORK_DIR = (Join-Path $Root "data\work")
-$env:LAKEFS_URL = "http://127.0.0.1:8001"   # only reachable with --profile full; the commit is best-effort
+$env:LAKEFS_URL = "http://127.0.0.1:8001"
+if (-not $env:LAKEFS_REQUIRED) { $env:LAKEFS_REQUIRED = "true" }
 $env:PYTHONUTF8 = "1"
 $env:MLFLOW_DISABLE_AGENT_HINT = "1"
 $env:JOB_RUNNER = "host"

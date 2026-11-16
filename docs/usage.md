@@ -24,7 +24,7 @@
 |------------------|--------------------------|
 | ミッション取込、アノテーション、データセット版切り | **初回だけ** Docker イメージと Python 依存の取得 |
 | MLflow 学習、評価ゲート、Ed25519 署名 | `docker compose up --build` は PyPI / Hub に出る |
-| Garage 上の生データ・モデル保管 | 新しい Python パッケージの追加（wheel を別途搬入） |
+| SeaweedFS 上の生データ・モデル保管 | 新しい Python パッケージの追加（wheel を別途搬入） |
 | チャンク同期の模擬、監査ログ | GPU 用 CUDA イメージ（別途搬入） |
 
 この PC ではすでにイメージがローカルにあります。ケーブルを抜いても `docker compose up -d` で再起動できます。
@@ -58,12 +58,11 @@
 | 件数確認 | http://127.0.0.1:8000/status | なし | なし |
 | MLflow | http://127.0.0.1:5000 | なし | なし |
 | Label Studio | http://127.0.0.1:8081 | `admin@ugv.local` | `label_change_me` |
-| Garage S3（コンソールなし） | http://127.0.0.1:9000 | Access Key `GKabcdef0123456789abcdef01234567` | Secret `ugv_garage_secret_change_me_do_not_use_in_prod` |
-| Garage 管理 API | http://127.0.0.1:3903 | ヘッダ `Authorization: Bearer …` | トークン `ugv_garage_admin_change_me` |
+| SeaweedFS S3（コンソールなし） | http://127.0.0.1:9000 | Access Key `GKabcdef0123456789abcdef01234567` | Secret `ugv_garage_secret_change_me_do_not_use_in_prod` |
+| LakeFS | http://127.0.0.1:8001 | Access Key `AKIAUGVLAKEFS01`（初期ユーザー名 `ugv`） | Secret `lakefs_secret_change_me_32chars!` |
 | PostgreSQL | `127.0.0.1:5432` | `ugv` | `ugv_change_me` |
-| DVC remote `garage` | S3 `s3://dvc`（上記と同じキー） | 同上 Access Key | 同上 Secret |
 
-Label Studio はサインアップ閉鎖（`LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK`）なので、上の初期ユーザー以外は作れません。S3 ソースに Garage を足すときも同じ Access Key / Secret、エンドポイント `http://garage:3900`（コンテナから）または `http://127.0.0.1:9000`（ホストから）、バケット `raw`、region `garage`、path-style。
+Label Studio はサインアップ閉鎖（`LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK`）なので、上の初期ユーザー以外は作れません。S3 ソースに SeaweedFS を足すときも同じ Access Key / Secret、エンドポイント `http://seaweed:8333`（コンテナから）または `http://127.0.0.1:9000`（ホストから）、バケット `raw`、region `us-east-1`、path-style。
 
 ### アノテーション（本 compose 外）
 
@@ -74,19 +73,18 @@ Label Studio はサインアップ閉鎖（`LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_
 | Xtreme1 MinIO コンソール | http://127.0.0.1:8194 | `admin` | `1tQB970y` |
 | Xtreme1 MySQL（通常は触らない） | `127.0.0.1:8191` DB `xtreme1` | `xtreme1`（root は `ImOxO8Lz`） | `Rc4K3L6f` |
 
-Xtreme1 の MinIO は本スタックの Garage（`:9000`）とは別です。キーを混ぜないでください。
+Xtreme1 の MinIO は本スタックの SeaweedFS（`:9000`）とは別です。キーを混ぜないでください。
 
 ### 拡張（メニュー 7 / `--profile full`）
 
 | ツール | URL | ID / キー | パスワード / シークレット |
 |--------|-----|-----------|---------------------------|
-| LakeFS | http://127.0.0.1:8001 | Access Key `AKIAUGVLAKEFS01`（初期ユーザー名 `ugv`） | Secret `lakefs_secret_change_me_32chars!` |
 | Gitea | http://127.0.0.1:3000 | 初回アクセスで管理者を **新規登録**（初期ユーザーは無い） | 登録時に自分で設定 |
 | Grafana | http://127.0.0.1:3001 | `admin` | `grafana_change_me` |
 | Prometheus | http://127.0.0.1:9090 | なし | なし |
 | Redis | `127.0.0.1:6379` | なし | なし |
 
-`.env` の対応変数: `LABEL_STUDIO_USERNAME` / `LABEL_STUDIO_PASSWORD`、`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`、`GARAGE_ADMIN_TOKEN`、`POSTGRES_USER` / `POSTGRES_PASSWORD`、`LAKEFS_ACCESS_KEY_ID` / `LAKEFS_SECRET_ACCESS_KEY`、`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`。
+`.env` の対応変数: `LABEL_STUDIO_USERNAME` / `LABEL_STUDIO_PASSWORD`、`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`、`POSTGRES_USER` / `POSTGRES_PASSWORD`、`LAKEFS_ACCESS_KEY_ID` / `LAKEFS_SECRET_ACCESS_KEY`、`LAKEFS_REQUIRED`、`GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`。
 
 ---
 
@@ -205,12 +203,12 @@ Invoke-RestMethod -Method POST http://localhost:8000/ingest `
   -Body '{"path":"/data/inbox/M-20260831-001","source_type":"physical_media"}'
 ```
 
-返った `job_id` を `GET /jobs/{id}` で `completed` になるまで見ます。中では DVC プロジェクトと同じ 4 段階です。
+返った `job_id` を `GET /jobs/{id}` で `completed` になるまで見ます。中では次の段階です。
 
-1. **取込** — `data/dvc/raw/missions/<id>/` へコピー  
+1. **取込** — `data/dvc/raw/missions/<id>/` へコピー（パス名は互換のため維持）  
 2. **パース** — カメラ JPEG、LiDAR `*.bin`、GNSS/odom、cmd_vel  
-3. **追跡** — DVC ポインタ（実体は Git に入らない）  
-4. **保管** — Garage `raw` と `s3://dvc`
+3. **保管** — SeaweedFS `s3://raw`  
+4. **版付け** — LakeFS commit（`raw/missions/<id>/`）。失敗時はジョブ失敗（`LAKEFS_REQUIRED=true`）
 
 段階だけ回すときはランチャー **6**、または `POST /missions/import` → `/track` → `/parse` → `/store`。一覧は `GET /missions`。
 
@@ -345,8 +343,8 @@ http://localhost:3000 の Gitea にリポジトリを作り、`configs/artifact_
 - 工程4 データ確認失敗 → 未取込・サンプル 0・知覚なのにカメラなし。データタブで確認
 - 工程5 Label Studio 失敗 → `:8081` の起動と初期ユーザー。ジョブは失敗扱い（ソフト成功しない）
 - 工程10 軽量化失敗 → S1+onnx は不可。torch/skl2onnx 変換エラーは `failed`（重い成果物のまま「成功」にしない）
-- 工程11 同期先が空 → `data/work/vehicles/<車両>/inbox/` を確認。Garage から zip を読んで書く
+- 工程11 同期先が空 → `data/work/vehicles/<車両>/inbox/` を確認。SeaweedFS から zip を読んで書く
 - ゲート失敗 → ジョブ結果の `reasons`（精度、FPR、mae_steer、段ホワイトリスト、サイズ、任務モード）
 - E2E が「操作系列がありません」→ bag に `/cmd_vel` 等が無いか。`series/action.jsonl` を置く
-- Garage にファイルが無い → ingest の `path` がコンテナ側 `/data/inbox/...` か。旧 MinIO ボリュームは自動移行しない
+- SeaweedFS にファイルが無い → ingest の `path` がコンテナ側 `/data/inbox/...` か。旧 Garage/MinIO ボリュームは自動移行しない
 - 閉鎖網で compose が落ちる → `--build` や `pull` を使っていないか。`airgap-import.ps1` を使う

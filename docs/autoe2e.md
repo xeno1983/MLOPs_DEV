@@ -151,6 +151,19 @@ python -m ugv_mlops.cli autoe2e-build -m <mission_id>
 
 ---
 
+## 実測（合成デモ · 2026-11-14）
+
+| 段 | 結果 |
+|----|------|
+| mission | `M-AUTOE2E-DEMO`（`make_demo_bag` 96s · 6cam） |
+| dataset | `ds-autoe2e-demo-v2`（2 scenes / 642 samples · LakeFS commit） |
+| train | run `30124649754b42b4bbd45bd052874873` · epochs=1 · stride=20 · CUDA bf16 |
+| metrics | ADE 0.433 m（parent 0.439 / CV 0.700）· improved_over_parent |
+| gate | staging **passed** → `mdl_30124649754b` |
+| artifact | `s3://models/30124649754b42b4bbd45bd052874873/checkpoint.pt` |
+
+---
+
 ## やらないこと
 
 - AutoE2E 学習を compose の docker worker で回す（CUDA / Autoware パスが無い）

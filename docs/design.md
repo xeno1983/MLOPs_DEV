@@ -1,6 +1,8 @@
 # UGV オンプレ MLOps 設計書
 
-本書は、このリポジトリが **何を・どの順で・どのツールに渡すか** を固定する。四脚 PJ との層対応と日常の順は [workflow.md](workflow.md)、**11 工程の定義**は [pipeline-stages.md](pipeline-stages.md)、**学習タスク**は [tasks.md](tasks.md)、**AutoE2E 連携**は [autoe2e.md](autoe2e.md)、**CARLA**は [carla.md](carla.md)、**CI/CD・テスト**は [ci-cd-testing.md](ci-cd-testing.md)、使い方は [usage.md](usage.md)、新規 Windows 構築は [setup-windows.md](setup-windows.md)、フォルダ契約は [dataset.md](dataset.md)、起動・閉鎖網は [airgap.md](airgap.md)。
+本書は、このリポジトリが **何を・どの順で・どのツールに渡すか** を固定する。四脚 PJ との層対応と日常の順は [workflow.md](workflow.md)、**11 工程の定義**は [pipeline-stages.md](pipeline-stages.md)、**進捗ガント**は [gantt.md](gantt.md)（正本 [progress.yaml](progress.yaml)）、**学習タスク**は [tasks.md](tasks.md)、**AutoE2E 連携**は [autoe2e.md](autoe2e.md)、**CARLA**は [carla.md](carla.md)、**構成図・外部/内部 IF**は [diagrams.md](diagrams.md)、**CI/CD・テスト**は [ci-cd-testing.md](ci-cd-testing.md)、使い方は [usage.md](usage.md)、新規 Windows 構築は [setup-windows.md](setup-windows.md)、フォルダ契約は [dataset.md](dataset.md)、起動・閉鎖網は [airgap.md](airgap.md)。**オブジェクトストア / 版管理の置き換え経緯**は [design-seaweed-lakefs.md](design-seaweed-lakefs.md)（P4 完了・現状は SeaweedFS + LakeFS）。
+
+**現状（2026-11-14）:** 知覚 1–11 と Seaweed/LakeFS P4、AutoE2E 合成デモ（dataset→train→gate → `mdl_30124649754b`）まで実測済み。残課題は古典 E2E（O4）と CARLA ライブ録画。
 
 ---
 
@@ -13,9 +15,10 @@ UGV が持ち帰ったデータ（ROS2 bag / 画像 / センサ / 公開サン�
 ```text
 人が触る          制御の中枢                    実体
 ---------         -----------                  ------
-ポータル ──API──► Catalog ──job──► Worker(docker) ──S3──► Garage
+ポータル ──API──► Catalog ──job──► Worker(docker) ──S3──► SeaweedFS
 Label Studio              │            └── Host worker（AutoE2E / CARLA launch）
-MLflow UI                 └── PostgreSQL (catalog DB)
+MLflow UI                 ├── PostgreSQL (catalog DB)
+                          └── LakeFS（raw/datasets の版。fail-closed）
 ```
 
 既定起動はこの中核だけ。車載パッケージ／Git 風データ版／監視は `--profile full`。知覚は **アノテーション必須**（四脚シミュのように教師が自動では付かない）。失敗は **偽成功にしない**（ゲート・同期・ポータルのジョブ待ち・シミュ確認は fail-closed）。
@@ -25,7 +28,7 @@ MLflow UI                 └── PostgreSQL (catalog DB)
 | 疑問 | 答え |
 |------|------|
 | いま何が起きているか | `job` テーブルとポータル |
-| ファイルはどこか | Garage（バケットが種類。S3 互換） |
+| ファイルはどこか | SeaweedFS（バケットが種類。S3 互換） |
 | ID とラベルはどこか | PostgreSQL `catalog` |
 | 学習指標の画面は | MLflow |
 | 車載に載せてよいか | ゲート通過後の `model_version` だけ |
@@ -43,7 +46,7 @@ UAIS 4 層のうち、本スタックは **層3（学習 DB）と前線学習（
 | 0 エッジ | 車載 DB・推論 | 更新パッケージの宛先。同期の受信側 |
 | 1 一次 | 管制の生受信 | `data/inbox/<mission>/` へコピー |
 | 2 二次 | COP／DSS の判断 | `annotation` へ合流（Label Studio または labels.jsonl） |
-| 3 学習 | 隔離セグメント | Catalog + Garage + MLflow + ゲート |
+| 3 学習 | 隔離セグメント | Catalog + SeaweedFS + LakeFS + MLflow + ゲート |
 
 学習段（`configs/artifact_policy.yaml`）:
 
@@ -69,15 +72,15 @@ UAIS 4 層のうち、本スタックは **層3（学習 DB）と前線学習（
 | **catalog** | 8000 | FastAPI。ジョブ投入・照会・ダッシュボード集計 | **制御の入口** |
 | **worker** | なし | ジョブ実行（取込・学習・ゲート） | **実行エンジン**。YOLOX 用に PyTorch 入り |
 | **postgres** | 5432 | DB: `catalog` / `mlflow` / `labelstudio`（`lakefs` は拡張用に空作成） | メタデータの本体 |
-| **garage** | 9000 / 3903 | S3 互換オブジェクトストア（Deuxfleurs Garage） | **ファイルの本体** |
-| **mlflow** | 5000 | 実験追跡。成果物は Garage `mlflow` | 学習の記録 UI |
+| **seaweed** | 9000（S3） | SeaweedFS all-in-one S3（旧 Garage / 四脚 MinIO） | **ファイルの本体** |
+| **lakefs** | 8001 | raw/datasets の Git 風版管理（旧 DVC）。ブロックは Seaweed `lakefs` | **データ版の正（履歴）**。学習 ID の正は Catalog |
+| **mlflow** | 5000 | 実験追跡。成果物は Seaweed `mlflow` | 学習の記録 UI |
 | **labelstudio** | 8081 | 人手ラベル | 知覚分類のラベル源 |
 
 **拡張（`docker compose --profile full up -d`）。** 学習ループには不要。
 
 | サービス | ポート | 役割 | パイプライン上の位置 |
 |----------|--------|------|----------------------|
-| **lakefs** | 8001 | データセットの Git 風版管理。ブロックは Garage `lakefs` | 任意。版の正は Postgres `dataset_version` + Garage zip |
 | **gitea** | 3000 | 学習コードとポリシー YAML | コード版。学習ジョブとは自動紐付けしない |
 | **prometheus** | 9090 | Catalog `/metrics` をスクレイプ | 監視 |
 | **grafana** | 3001 | Prometheus を見る | 監視 UI。学習ループには入らない |
@@ -101,7 +104,7 @@ sequenceDiagram
   participant DB as Postgres catalog
   participant W as Worker docker
   participant H as Host worker
-  participant S3 as Garage
+  participant S3 as SeaweedFS
   participant MF as MLflow
 
   Op->>P: 工程実行 / デモ / CARLA 起動
@@ -131,7 +134,7 @@ sequenceDiagram
 
 | kind | runner | 中身 |
 |------|--------|------|
-| `ingest` | docker | bag / フォルダを Garage `raw` と `learning_sample` へ |
+| `ingest` | docker | bag / フォルダを SeaweedFS `raw` と `learning_sample` へ（LakeFS commit） |
 | `build_dataset` | docker（`autoe2e` は host） | ラベル済みから zip を `datasets` へ |
 | `train` | docker（`autoe2e` は host） | データセット版を学習。タスクで分岐 |
 | `gate` | docker | 指標判定・署名・`model_version`（実体サイズ必須） |
@@ -148,7 +151,7 @@ sequenceDiagram
 
 ## 5. データフロー（必須）
 
-実体は Garage（S3）、関係は Catalog DB。両者を **同じ ID** で結ぶ。
+実体は SeaweedFS（S3）、関係は Catalog DB。両者を **同じ ID** で結ぶ。データ版の履歴は LakeFS。
 
 ### 5.1 ID の鎖（これが構造の本体）
 
@@ -166,20 +169,21 @@ mission_id
                                               └─ model_issue_event（open → in_progress → resolved）
 ```
 
-ファイル URI は常に `s3://<bucket>/<key>`。Catalog の `object_uri` が Garage 上の実体を指す。
+ファイル URI は常に `s3://<bucket>/<key>`。Catalog の `object_uri` が SeaweedFS 上の実体を指す。
 
-### 5.2 Garage バケット
+### 5.2 SeaweedFS バケット（S3）
 
 | バケット | 何が入るか | 誰が書く |
 |----------|------------|----------|
 | `raw` | bag 原本、展開 JPEG、imu/gnss/odom/action/lidar の jsonl | ingest |
 | `curated` | 将来のスクラブ後（現状パイプライン未使用） | — |
 | `datasets` | 版付き zip（ImageFolder / COCO / E2E records） | build_dataset |
-| `models` | joblib または `yolox_nano.pth` | train |
+| `models` | joblib または `yolox_nano.pth` / onnx | train / lighten |
 | `packages` | 署名付き車載 zip | package |
 | `mlflow` | MLflow サーバが置く実験アーティファクト | MLflow |
 | `lakefs` | LakeFS のブロックストア | LakeFS |
-| `dvc` | DVC キャッシュ（ポインタは Git の `*.dvc`） | ingest / dataset の区切り |
+
+LakeFS リポジトリ `ugv-datasets` には `raw/missions/<id>/` と `datasets/<version>.zip` を commit する（DVC `*.dvc` の置き換え）。詳細は [design-seaweed-lakefs.md](design-seaweed-lakefs.md)。
 
 ### 5.3 入力から車載までの一本線（11 工程）
 
@@ -190,12 +194,15 @@ mission_id
 ```mermaid
 flowchart TB
   subgraph host["ホストディスク / WSL"]
-    SIM["CarlaUE4 + mining_sim"]
-    AW["Autoware_e2e bags"]
+    SIM["CarlaUE4"]
+    OFF["offroad_collect WASD+bag"]
+    MSIM["mining_sim 代替"]
+    AW["Autoware_e2e/datasets/carla_bags"]
     BAG["ROS2 bag / 画像 / COCO128 / series"]
     INBOX["data/inbox/mission"]
     HW["Host worker"]
-    SIM --> AW
+    SIM --> OFF --> AW
+    SIM --> MSIM --> AW
     AW --> INBOX
     BAG --> INBOX
     HW -->|launch/stop| SIM
@@ -228,12 +235,13 @@ flowchart TB
     AUD["audit_log QA / review"]
   end
 
-  subgraph s3["Garage S3 :9000"]
+  subgraph s3["SeaweedFS S3 :9000"]
     RAW["bucket raw"]
     DSET["bucket datasets"]
     MOD["bucket models"]
     PKGS["bucket packages"]
     MLB["bucket mlflow"]
+    LKB["bucket lakefs"]
   end
 
   subgraph ls["Label Studio :8081"]
@@ -285,17 +293,17 @@ flowchart TB
 |----|----------------|------|------------------|-------------|
 | 1 シミュ | `POST /carla/launch` → import → `sim-generate` ack | host（起動）+ docker（取込） | CARLA bag → inbox | `audit_log`（**mission + bag 実体必須**） |
 | 2 置く | ホスト `data/inbox` | — | ディスク | — |
-| 3 取込 | `POST /ingest` | docker worker | Garage `raw` | `learning_sample` |
+| 3 取込 | `POST /ingest` | docker worker | SeaweedFS `raw` + LakeFS | `learning_sample` |
 | 4 データ確認 | データタブ + `POST /data-qa` | Catalog / job | — | `audit_log`（不合格はジョブ失敗） |
-| 5 ラベル | Label Studio / SALT / SAM | Worker import/export | Garage `raw` 中継 | `annotation`（LS 失敗はジョブ失敗） |
+| 5 ラベル | Label Studio / SALT / SAM | Worker import/export | SeaweedFS `raw` 中継 | `annotation`（LS 失敗はジョブ失敗） |
 | 6 ラベル確認 | Xtreme1 `:8190` + `POST /label-review` | compose 外 UI | `data/annotate` | `audit_log` |
-| 7 データセット | `POST /datasets/build` | docker / host(`autoe2e`) | Garage `datasets` | `dataset_version` |
-| 8 学習 | `POST /train` / MLflow | docker / host(`autoe2e`) | Garage `models` / `mlflow` | `training_run` |
+| 7 データセット | `POST /datasets/build` | docker / host(`autoe2e`) | SeaweedFS `datasets` + LakeFS | `dataset_version` |
+| 8 学習 | `POST /train` / MLflow | docker / host(`autoe2e`) | SeaweedFS `models` / `mlflow` | `training_run` |
 | 9 ゲート | `POST /gate` | docker worker | — | `model_version`（**artifact_uri + size>0**） |
-| 10 軽量化 | `POST /models/export` | docker worker | Garage `models` | 新 `model_version`（失敗は偽成功しない） |
-| 11 梱包・同期 | `POST /packages` + `/sync` + chunk | Catalog | Garage `packages` → vehicle inbox | `update_package` / `sync_transaction`（**sha256/size 必須**） |
+| 10 軽量化 | `POST /models/export` | docker worker | SeaweedFS `models` | 新 `model_version`（失敗は偽成功しない） |
+| 11 梱包・同期 | `POST /packages` + `/sync` + chunk | Catalog | SeaweedFS `packages` → vehicle inbox | `update_package` / `sync_transaction`（**sha256/size 必須**） |
 
-ポータル :8080 は nginx が `/api/` を Catalog :8000 に転送するだけ。Garage に Web コンソールはない。CARLA / TensorRT / SALT / Xtreme1 は本 compose に載せない（起動指示だけ Catalog→host）。
+ポータル :8080 は nginx が `/api/` を Catalog :8000 に転送するだけ。SeaweedFS に Web コンソールはない（S3 API）。CARLA / TensorRT / SALT / Xtreme1 は本 compose に載せない（起動指示だけ Catalog→host）。
 
 ### 5.4 タスクごとの中身
 
@@ -310,7 +318,7 @@ flowchart TB
 
 ROS2 bag 取込時の展開（ホストに ROS 不要、Python `rosbags`）:
 
-| bag の中身 | Catalog `modality` | Garage 上 |
+| bag の中身 | Catalog `modality` | SeaweedFS 上 |
 |------------|-------------------|----------|
 | Image / CompressedImage | `camera_front` 等 | JPEG |
 | Imu / NavSatFix / Odometry | `imu` / `gnss` / `odom` | jsonl 1 本 |
@@ -331,12 +339,15 @@ flowchart LR
   subgraph wired [データ連動している]
     C[Catalog / Worker]
     PG[(Postgres catalog)]
-    S3[Garage]
+    S3[SeaweedFS]
+    LK[LakeFS]
     MF[MLflow]
     LS[Label Studio]
     PR[Prometheus]
     C <--> PG
     C <--> S3
+    C -->|ingest/dataset commit fail-closed| LK
+    LK -->|blockstore| S3
     C -->|学習 run_id・指標・artifact| MF
     MF --> S3
     C -->|ingest 後に画像 URL import| LS
@@ -345,11 +356,8 @@ flowchart LR
   end
 
   subgraph partial [起動済み。認証または運用でつなぐ]
-    LK[LakeFS]
     GI[Gitea]
     GF[Grafana]
-    C -.->|データセット zip を commit 試行。キー未設定なら 401| LK
-    LK --> S3
     GI -.->|コード置き場。run とは自動結合しない| C
     GF --> PR
   end
@@ -357,8 +365,8 @@ flowchart LR
 
 ### 6.1 連動の契約（実装があるもの）
 
-**Catalog ↔ Garage**  
-Worker が `ugv_mlops.storage`（minio 互換クライアント）で put/get。バケットは上記。SHA-256 でサンプル ID を決めるため、同じファイルは同じ `sample_id`。ホストからは `http://localhost:9000`（コンテナ内は `garage:3900`）。region は `garage`、path-style。
+**Catalog ↔ SeaweedFS**  
+Worker が `ugv_mlops.storage`（minio 互換クライアント）で put/get。バケットは上記。SHA-256 でサンプル ID を決めるため、同じファイルは同じ `sample_id`。ホストからは `http://localhost:9000`（コンテナ内は `seaweed:8333`）。region は `us-east-1`、path-style。
 
 **Catalog ↔ PostgreSQL `catalog`**  
 ミッション、サンプル、アノテーション、データセット版、学習 run、モデル、パッケージ、同期、ジョブ、監査。スキーマは `schemas/01_catalog.sql`。
@@ -367,37 +375,51 @@ Worker が `ugv_mlops.storage`（minio 互換クライアント）で put/get。
 学習ジョブだけが Tracking URI `http://mlflow:5000` に run を書く。`training_run.run_id` は MLflow の run_id と同じ。ゲートは Catalog の `metrics_json` を見る（MLflow UI は人が見る用）。MLflow の成果物バケットは `mlflow`、Catalog が車載用に使うコピーは `models`。
 
 **Catalog ↔ Label Studio**  
-- ingest 完了後: カメラ `sample_id` をプロジェクト `UGV-obstacle-cls` に import。画像 URL は `http://localhost:8000/samples/{id}/file`（Catalog が Garage を中継）。  
+- ingest 完了後: カメラ `sample_id` をプロジェクト `UGV-obstacle-cls` に import。画像 URL は `http://localhost:8000/samples/{id}/file`（Catalog が SeaweedFS を中継）。  
 - dataset 構築前: export JSON を引き、`annotation` に class を戻す。  
 検出の COCO bbox や E2E は、この自動プロジェクトを使わない（bbox は `labels.jsonl`、E2E は cmd_vel）。
 
-**Catalog ↔ DVC**  
-ingest と dataset 構築の区切りで Worker が `dvc add` / `dvc push -r garage-docker`。実体は Garage `s3://dvc`。ポインタは Git の `*.dvc`。dvc 未導入や push 失敗でも Catalog の学習は続く。ホストから見る remote 名は `garage`（`:9000`）。
+**Catalog ↔ LakeFS**  
+ingest と dataset 構築の区切りで Worker が LakeFS に commit（`raw/missions/<id>/`、`datasets/<version>.zip`）。ブロックストアは SeaweedFS `s3://lakefs`。学習 ID の正は Catalog。`LAKEFS_REQUIRED=true`（P4）では commit 失敗でジョブ失敗。
 
 **Catalog ↔ SALT / Xtreme1 / SAM**  
-本 compose には載せない。`POST /annotate/init` が Garage のカメラ／点群を `data/annotate/<mission>` に出す。工程5は Label Studio / SALT / SAM、工程6は Xtreme1 `:8190` で突き合わせ確認（`POST /label-review`）。結果は `annotate-import-*` で `annotation` に戻す。
+本 compose には載せない。`POST /annotate/init` が SeaweedFS のカメラ／点群を `data/annotate/<mission>` に出す。工程5は Label Studio / SALT / SAM、工程6は Xtreme1 `:8190` で突き合わせ確認（`POST /label-review`）。結果は `annotate-import-*` で `annotation` に戻す。
 
 **Catalog ↔ シミュ（CARLA）**  
-本 compose 外（[carla.md](carla.md)）。
+本 compose 外（詳細・操作は [carla.md](carla.md)）。
 
 | API | 役割 | 実行場所 |
 |-----|------|----------|
 | `POST /carla/launch` / `stop` | CarlaUE4 / `mining_sim` 起動・停止 | **host job**（コンテナ内では Popen しない） |
 | `GET /carla/status` | Autoware ルート・`CARLA_ROOT`・TCP `:2000` probe・runtime | Catalog |
-| `GET /carla/bags` / `record-hint` | bag 一覧・録画コマンド | Catalog |
+| `GET /carla/bags` / `record-hint` | bag 一覧・録画コマンド（ROS 経路用ヒント） | Catalog |
 | `POST /carla/import` | 許可パス（Autoware / inbox のみ）→ `data/inbox` | docker job |
 | `POST /pipeline/sim-generate` | `import` または `ack`（**mission_id + bag 実体必須**） | docker job |
 
-設定: `CARLA_ROOT` / `CARLA_LAUNCH_MODE=wsl|native|script`。代替入口: CLI `carla-launch`、`scripts/carla-launch.ps1`、ランチャー `c`。取込後は実機と同じ ingest 線。
+設定: `CARLA_ROOT` / `CARLA_LAUNCH_MODE=wsl|native|script`。代替入口: CLI `carla-launch`、`scripts/carla-launch.ps1`、ランチャー `c` / `o`。取込後は実機と同じ ingest 線。
+
+**工程1の既定データ生成（オフロード）**
+
+| 項目 | 設計 |
+|------|------|
+| 目的 | UGV 相当車両を手動走行し、AutoE2E 向け rosbag2 を保管する |
+| サーバ | WSL CarlaUE4 0.9.15（`:2000`）。compose 外 |
+| クライアント | `scripts/carla_offroad_collect.py`（**ROS 非依存**） |
+| Python API | PyPI `carla-0-9-15`（cp310）。公式 py3.7 egg は ABI 不一致のため使用禁止 |
+| venv | WSL `~/.venv-carla915`（Python 3.10 + pygame + rosbags） |
+| マップ | 既定 **Town01**（任意 Mine_01 / Town07） |
+| 車両 | **Tesla Cybertruck**（`vehicle.tesla.cybertruck`） |
+| トピック | RGB×6 · LiDAR×3 · GNSS/IMU · `/odometry` · `/speed`（`rig.carla.yaml`） |
+| 出力 | `AUTOWARE_E2E_ROOT/datasets/carla_bags/<run_id>/` → `POST /carla/import` |
+| 起動入口 | `scripts/start-carla-offroad.ps1`（サーバ未起動なら `start-carla.ps1`） |
+
+`mining_sim` + `ros2 bag record` は代替経路。Jazzy（py3.12）と CARLA egg は同一プロセスに載せない。
 
 **Catalog ↔ ホストワーカー**  
-`launcher/MLOPS_gpu_worker.bat` → `host_worker.py` が `runner=host` のジョブだけを拾う。対象: AutoE2E の dataset/train、`carla_launch` / `carla_stop`。Catalog / Postgres / Garage / MLflow は localhost ポート越し。
+`launcher/MLOPS_gpu_worker.bat` → `host_worker.py` が `runner=host` のジョブだけを拾う。対象: AutoE2E の dataset/train、`carla_launch` / `carla_stop`。Catalog / Postgres / SeaweedFS / MLflow / LakeFS は localhost ポート越し。実測: 合成デモ `ds-autoe2e-demo-v2` → gate staging `mdl_30124649754b`（[autoe2e.md](autoe2e.md)）。
 
 **Catalog ↔ 軽量化**  
-ゲート合格の `model_version` から `POST /models/export` が ONNX（または既存の小さい成果物）を Garage `models` に置き、別 `model_version` を切る。変換失敗はジョブ失敗（偽成功しない）。TensorRT エンジン化は車載／Autoware 側。
-
-**Catalog ↔ LakeFS**  
-データセット zip 作成後に `ugv-datasets` の `main` へオブジェクトを置き commit する。LakeFS のインストールキーが compose と合っていないと 401 になり、**データセット自体は Garage `datasets` に残る**（学習は止まない）。DVC が既定の大きい成果物の版。
+ゲート合格の `model_version` から `POST /models/export` が ONNX（または既存の小さい成果物）を SeaweedFS `models` に置き、別 `model_version` を切る。変換失敗はジョブ失敗（偽成功しない）。TensorRT エンジン化は車載／Autoware 側。
 
 **Prometheus ↔ Catalog**  
 `/metrics` をスクレイプ。Grafana は Prometheus をデータソースにする。学習ジョブの合格判定には使わない（監視・死活）。
@@ -417,7 +439,7 @@ ingest と dataset 構築の区切りで Worker が `dvc add` / `dvc push -r gar
 | :8080 | ポータル | `/api/pipeline` `/api/dashboard` `/api/carla/*`。工程はジョブ完了まで待つ |
 | :8000/docs | Catalog OpenAPI | 工程の手動実行 |
 | :5000 | MLflow | Worker が書いた run を閲覧 |
-| :9000 | Garage S3 | バケットの中身（コンソールなし。aws s3 / Catalog 経由） |
+| :9000 | SeaweedFS S3 | バケットの中身（コンソールなし。aws s3 / Catalog 経由） |
 | :8081 | Label Studio | ingest が投げたタスクを人がラベル |
 | :8001 | LakeFS | データセット commit を閲覧（キー設定後） |
 | :3000 | Gitea | コード。Actions で CI 可 |
@@ -553,7 +575,7 @@ YOLOX デモの COCO128 は COCO train の部分集合なので、mAP は **パ�
 |------|------|
 | `docker-compose.yml` | サービスとポート、ボリューム |
 | `schemas/01_catalog.sql` / `02_issues.sql` | 層3 学習 DB。課題表は既存 volume へ `ensure_schema` でも適用 |
-| `configs/garage.toml` / `configs/artifact_policy.yaml` | Garage・学習段ポリシー |
+| `configs/seaweed/s3.json` / `configs/artifact_policy.yaml` | SeaweedFS S3・学習段ポリシー |
 | `src/ugv_mlops/api.py` | HTTP。ジョブ投入・ダッシュボード・課題・carla |
 | `src/ugv_mlops/issues.py` | デプロイ済みモデルに紐づく課題 CRUD とタイムライン |
 | `src/ugv_mlops/jobs.py` / `host_worker.py` | ジョブディスパッチ（docker / host） |
@@ -564,7 +586,10 @@ YOLOX デモの COCO128 は COCO train の部分集合なので、mAP は **パ�
 | `src/ugv_mlops/train.py` / `yolox_train.py` | 学習 |
 | `src/ugv_mlops/gate.py` / `lighten.py` / `package.py` / `sync.py` | 合格・軽量化・梱包・配送 |
 | `src/ugv_mlops/integrations.py` | LS / LakeFS / 疎通プローブ |
-| `scripts/carla-launch.ps1` | ホストから CARLA 直接起動 |
+| `scripts/carla-launch.ps1` / `start-carla.ps1` | ホスト／WSL から CarlaUE4 起動 |
+| `scripts/setup-carla-offroad.ps1` / `setup-carla-offroad-env.sh` | オフロード収集 venv（`carla-0-9-15`） |
+| `scripts/start-carla-offroad.ps1` / `carla_offroad_collect.py` | WASD 走行 + rosbag2 録画（工程1 既定） |
+| `docs/carla.md` | CARLA 境界・オフロード収集の操作設計 |
 | `tests/` / `requirements-dev.txt` | L1 単体。CI 設計は `docs/ci-cd-testing.md` |
 | `.github/workflows/ci-unit.yml` | PR 用 L1（push に `workflow` スコープが必要な場合あり） |
 | `data/inbox/` / `data/work/` | 一次データ入口・CARLA runtime / vehicle inbox |
@@ -595,4 +620,7 @@ YOLOX デモの COCO128 は COCO train の部分集合なので、mAP は **パ�
 
 | 日付 | 内容 |
 |------|------|
+| 2026-11-09 | アジャイル追従の設計↔実装整合: 工程1既定=offroad collect を portal / howto / record-hint / ランチャーに反映 |
+| 2026-11-09 | [diagrams.md](diagrams.md) をプロジェクト全体・細粒度に改訂（サービス / 11工程シーケンス / 全 job kind 入出力） |
+| 2026-11-09 | 工程1オフロード収集を設計固定（`carla-0-9-15` / ROS 無し bag / Mine_01·Town07）。§6 CARLA・§10 スクリプト表・[carla.md](carla.md) 更新 |
 | 2026-11-02 | 11 工程・fail-closed（gate/sync/portal/sim ack）。CARLA host launch。docker/host runner。CI/CD 管理ツール統合（§6.4）。関連 [carla.md](carla.md) / [ci-cd-testing.md](ci-cd-testing.md) / [tasks.md](tasks.md) |

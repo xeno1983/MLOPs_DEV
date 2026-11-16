@@ -8,7 +8,7 @@ from minio import Minio
 
 from ugv_mlops.settings import settings
 
-BUCKETS = ("raw", "curated", "datasets", "models", "packages", "mlflow", "lakefs", "dvc")
+BUCKETS = ("raw", "curated", "datasets", "models", "packages", "mlflow", "lakefs")
 
 
 @lru_cache(maxsize=1)

@@ -388,16 +388,18 @@ function Show-Dvc {
 
 function Show-Carla {
     Write-Host ""
-    Write-Host " CARLA（compose 外。起動は host / WSL。詳細 docs/carla.md）"
+    Write-Host " CARLA（compose 外。詳細 docs/carla.md）"
     Write-Host "  0  初回準備 setup-carla.ps1（-Download は大きい）"
+    Write-Host "  o  【推奨】オフロード走行+録画 start-carla-offroad.ps1"
+    Write-Host "  s  オフロード環境セットアップ setup-carla-offroad.ps1"
     Write-Host "  1  状態 GET /carla/status"
     Write-Host "  2  bag 一覧 GET /carla/bags"
     Write-Host "  3  inbox へ取込 POST /carla/import"
-    Write-Host "  4  録画コマンドヒント"
-    Write-Host "  5  CARLA 起動（host job / ローカルスクリプト）"
-    Write-Host "  6  mining_sim 起動"
+    Write-Host "  4  録画ヒント（offroad + ROS 代替）"
+    Write-Host "  5  CARLA 起動（host job）"
+    Write-Host "  6  mining_sim 起動（代替）"
     Write-Host "  7  停止"
-    Write-Host "  8  ローカル直接起動 scripts/carla-launch.ps1"
+    Write-Host "  8  ローカル直接起動 carla-launch.ps1 stack"
     $pick = Read-Host "番号"
     switch ($pick) {
         "0" {
@@ -407,6 +409,12 @@ function Show-Carla {
             } else {
                 & (Join-Path $Root "scripts\setup-carla.ps1")
             }
+        }
+        "o" {
+            & (Join-Path $Root "scripts\start-carla-offroad.ps1")
+        }
+        "s" {
+            & (Join-Path $Root "scripts\setup-carla-offroad.ps1")
         }
         "1" {
             try { Write-Host ((Catalog-Get "/carla/status") | ConvertTo-Json -Depth 6) }

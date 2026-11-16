@@ -167,16 +167,12 @@ def _dispatch(kind: str, payload: dict) -> dict:
         from ugv_mlops.demo import run_av_rosbag_demo
 
         return run_av_rosbag_demo()
-    if kind == "dvc_publish":
-        from ugv_mlops.dvc_sync import publish_dataset, publish_mission
+    if kind == "lakefs_publish":
+        from ugv_mlops.lakefs_sync import commit_dataset_zip, commit_mission
 
         if payload.get("dataset_version_id"):
-            return publish_dataset(payload["dataset_version_id"], payload["object_uri"], push=payload.get("push", True))
-        return publish_mission(payload["mission_id"], push=payload.get("push", True))
-    if kind == "dvc_pull":
-        from ugv_mlops.dvc_sync import pull
-
-        return pull(payload.get("target"))
+            return commit_dataset_zip(payload["dataset_version_id"], payload["object_uri"])
+        return commit_mission(payload["mission_id"])
     if kind == "bag_parse":
         from ugv_mlops.bag_pipeline import parse_mission
 

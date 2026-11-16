@@ -6,7 +6,7 @@
 
 1. **（任意）シミュ** — CARLA / Autoware_e2e で bag を録り `data/inbox/<mission_id>/` へ。`POST /pipeline/sim-generate`（ミッション指定で実在検証）。
 2. **置く** — 実機帰還・シミュ・公開サンプルを同じ inbox に。
-3. **`POST /ingest`** — カメラ JPEG・センサ系列・元 bag を Garage `raw` / DVC へ。
+3. **`POST /ingest`** — カメラ JPEG・センサ系列・元 bag を SeaweedFS `raw` / LakeFS へ。
 4. **`POST /data-qa`** — 空 bag・未取込・カメラなし等は不合格（ジョブ失敗）。
 5. **知覚ならアノテ** — `POST /annotate/init`（Label Studio / SALT）。E2E はスキップ可。LS 投入失敗はジョブ失敗。
 6. **知覚なら確認** — Xtreme1 で突き合わせ後 `POST /label-review`。
@@ -23,9 +23,9 @@
 | ツール | ID | パスワード |
 |--------|----|------------|
 | Label Studio `:8081` | `admin@ugv.local` | `label_change_me` |
-| Garage S3 `:9000` | `GKabcdef0123456789abcdef01234567` | `ugv_garage_secret_change_me_do_not_use_in_prod` |
+| SeaweedFS S3 `:9000` | `.env` の `MINIO_ROOT_USER` | `.env` の `MINIO_ROOT_PASSWORD` |
 | Grafana `:3001`（拡張） | `admin` | `grafana_change_me` |
-| LakeFS `:8001`（拡張） | Access Key `AKIAUGVLAKEFS01` | Secret `lakefs_secret_change_me_32chars!` |
+| LakeFS `:8001`（中核） | Access Key `AKIAUGVLAKEFS01` | Secret `lakefs_secret_change_me_32chars!` |
 | Xtreme1 `:8190` | 初回 Sign up | 自分で設定 |
 | Xtreme1 MinIO `:8194` | `admin` | `1tQB970y` |
 | ポータル / Catalog / MLflow / SALT | なし | なし |
@@ -40,19 +40,21 @@
 - 検出: `configs/labelstudio/ugv_detection.xml`
 - 走行可能性: `configs/labelstudio/ugv_traversability.xml`
 
-ストレージは Garage（http://garage:3900、ホストからは `localhost:9000`、バケット `raw`）を Label Studio の S3 ソースに指定できます。Web コンソールはありません。
+ストレージは SeaweedFS（コンテナ `http://seaweed:8333`、ホスト `localhost:9000`、バケット `raw`）を Label Studio の S3 ソースに指定できます。
 
-Freespace / LiDAR / カメラ点群の突き合わせは [annotation.md](annotation.md)（SAM・SALT・Xtreme1）。Xtreme1 は **工程6**（Autoware_e2e の compose `:8190`）で、本スタックの Garage とは分けます。
+Freespace / LiDAR / カメラ点群の突き合わせは [annotation.md](annotation.md)（SAM・SALT・Xtreme1）。Xtreme1 は **工程6**（Autoware_e2e の compose `:8190`）で、本スタックの SeaweedFS とは分けます。
 
-## LakeFS / Gitea（任意）
+## LakeFS / Gitea
 
-既定起動では止まります。使うときだけ:
+LakeFS は中核（既定起動）。http://127.0.0.1:8001。Access Key `AKIAUGVLAKEFS01` / Secret `lakefs_secret_change_me_32chars!`。ブロックストアは SeaweedFS バケット `lakefs`。初回は `lakefs-init` が setup + `ugv-datasets` を作成。データセット zip の学習 ID の正は Catalog `dataset_version`、履歴の正は LakeFS。
+
+Gitea は拡張プロファイル:
 
 ```powershell
 docker compose --profile full up -d
 ```
 
-LakeFS は http://127.0.0.1:8001。Access Key `AKIAUGVLAKEFS01` / Secret `lakefs_secret_change_me_32chars!`。ブロックストアは Garage バケット `lakefs`。データセット zip の版の正は Catalog `dataset_version` です。Gitea は http://127.0.0.1:3000（初回に管理者を新規登録）。
+http://127.0.0.1:3000（初回に管理者を新規登録）。
 
 ## ゲートに落ちるとき
 

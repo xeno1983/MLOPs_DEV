@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     minio_root_user: str = "GKabcdef0123456789abcdef01234567"
     minio_root_password: str = "ugv_garage_secret_change_me_do_not_use_in_prod"
     minio_secure: bool = False
-    s3_region: str = "garage"
+    s3_region: str = "us-east-1"
+    lakefs_required: bool = True  # P4: ingest/dataset で LakeFS fail-closed
     mlflow_tracking_uri: str = "http://localhost:5000"
     artifact_policy_path: str = "configs/artifact_policy.yaml"
     signing_key_path: str = "data/keys/ed25519.pem"

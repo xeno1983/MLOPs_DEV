@@ -122,10 +122,10 @@ docker compose up -d --build
 
 初回は次を Hub / PyPI から取ります。
 
-- 公開イメージ: `postgres:16-alpine`、`dxflrs/garage:v2.3.0`、`heartexlabs/label-studio`、`nginx`、`python:3.12-slim-bookworm` など
+- 公開イメージ: `postgres:16-alpine`、`chrislusf/seaweedfs`、`treeverse/lakefs`、`heartexlabs/label-studio`、`nginx`、`python:3.12-slim-bookworm` など
 - ローカルビルド: Catalog、Worker（YOLOX を git clone するため **ネット必須**）、MLflow
 
-`garage-init` がバケット（`raw` / `datasets` / `models` / `mlflow` / `dvc` など）を作り、終わると消えます。失敗したら `docker compose logs garage-init` を見て、直してから `docker compose up -d` をもう一度。
+`seaweed-init` がバケット（`raw` / `datasets` / `models` / `mlflow` / `lakefs` など）を作り、`lakefs-init` が LakeFS setup + `ugv-datasets` を作ります。失敗したら `docker compose logs seaweed-init lakefs-init` を見て、直してから `docker compose up -d` をもう一度。
 
 待てる目安: 回線次第で 10〜40 分。Worker のビルドが一番長いです。
 
@@ -229,19 +229,15 @@ Freespace の SAM も同じ conda `SALT` と `tools/annotate.py` です。手順
 
 ---
 
-## 9. 任意 — ホストで DVC CLI を使う
+## 9. データ版（LakeFS）
 
-学習の正は Catalog の ID です。ホストから `dvc push` するときだけ:
+学習 ID の正は Catalog です。版履歴は LakeFS（http://127.0.0.1:8001）。CLI:
 
 ```powershell
-pip install -r requirements-dvc.txt
-$env:AWS_ACCESS_KEY_ID = (Get-Content .env | Where-Object { $_ -like "MINIO_ROOT_USER=*" }).Split("=",2)[1]
-$env:AWS_SECRET_ACCESS_KEY = (Get-Content .env | Where-Object { $_ -like "MINIO_ROOT_PASSWORD=*" }).Split("=",2)[1]
-$env:AWS_DEFAULT_REGION = "garage"
-dvc status
+docker compose exec -T worker python -m ugv_mlops.cli lakefs-status
 ```
 
-リモートは `.dvc/config` の `garage`（`http://127.0.0.1:9000`、バケット `dvc`）。コンテナ内 Worker は `garage-docker`（`http://garage:3900`）を使います。
+`LAKEFS_REQUIRED=true` のとき、ingest / dataset の LakeFS commit 失敗はジョブ失敗になります。
 
 ---
 

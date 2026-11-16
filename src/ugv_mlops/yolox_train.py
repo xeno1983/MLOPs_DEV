@@ -18,8 +18,10 @@ from ugv_mlops.yolox_sample import download_weights
 
 def train_yolox(dataset_version_id: str, stage: str | None = None) -> dict:
     """Fine-tune YOLOX-Nano on a COCO-format dataset zip and log mAP@0.5."""
+    from ugv_mlops.stages import assert_learning_stage
+
     torch = _torch()
-    stage = stage or settings.default_learning_stage
+    stage = assert_learning_stage(stage)
     work = settings.work_path / "train" / dataset_version_id
     if work.exists():
         shutil.rmtree(work)

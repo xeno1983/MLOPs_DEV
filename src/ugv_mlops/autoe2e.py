@@ -54,18 +54,27 @@ def autoware_root() -> Path:
 
 
 def python_exe(root: Path) -> Path:
+    """AutoE2E venv。Linux コンテナが Windows マウントを見る場合もあるので両方探す。"""
     if settings.autoe2e_python:
         py = Path(settings.autoe2e_python)
-    elif os.name == "nt":
-        py = root / ".venv-autoe2e" / "Scripts" / "python.exe"
-    else:
-        py = root / ".venv-autoe2e" / "bin" / "python"
-    if not py.is_file():
-        raise RuntimeError(
-            f"AutoE2E 用 Python が見つかりません: {py}。"
-            "Autoware_e2e/docs/reference/AUTO_E2E_OFFROAD.md の Stage 0 で .venv-autoe2e を作ってください。"
-        )
-    return py
+        if not py.is_file():
+            raise RuntimeError(f"AUTOE2E_PYTHON がありません: {py}")
+        return py
+    candidates = [
+        root / ".venv-autoe2e" / "Scripts" / "python.exe",
+        root / ".venv-autoe2e" / "bin" / "python",
+        root / ".venv-autoe2e" / "bin" / "python3",
+    ]
+    # 実行ホスト優先（host worker=Windows なら exe を先に）
+    if os.name != "nt":
+        candidates = candidates[1:] + candidates[:1]
+    for py in candidates:
+        if py.is_file():
+            return py
+    raise RuntimeError(
+        f"AutoE2E 用 Python が見つかりません（探した: {', '.join(str(c) for c in candidates)}）。"
+        "Autoware_e2e/docs/reference/AUTO_E2E_OFFROAD.md の Stage 0 で .venv-autoe2e を作ってください。"
+    )
 
 
 def rig_path(root: Path) -> Path:
@@ -250,10 +259,15 @@ def build_autoe2e_dataset(
     scenes_dir = work / "scenes" / mission_id
     scenes_dir.mkdir(parents=True)
 
+    # extract は Autoware ルートで cwd するため、bag/rig/out は絶対パスにする
+    bags_abs = [Path(b).resolve() for b in bags]
+    rig_abs = Path(rig).resolve()
+    out_abs = scenes_dir.resolve()
+
     cmd = [
         str(py), str(root / EXTRACT_REL), "extract",
-        *[str(b) for b in bags],
-        "--rig", str(rig), "--prefix", mission_id, "--out", str(scenes_dir), "--force",
+        *[str(b) for b in bags_abs],
+        "--rig", str(rig_abs), "--prefix", mission_id, "--out", str(out_abs), "--force",
     ]
     code = _run(cmd, root)
     if code != 0:
@@ -400,7 +414,9 @@ def train_autoe2e(dataset_version_id: str, stage: str | None = None, params: dic
     from ugv_mlops.hashing import sha256_file
     from ugv_mlops.storage import parse_s3_uri
 
-    stage = stage or settings.default_learning_stage
+    from ugv_mlops.stages import assert_learning_stage
+
+    stage = assert_learning_stage(stage)
     if stage not in ALLOWED_STAGES:
         raise PermissionError(f"AutoE2E のフル重みは学習段 {sorted(ALLOWED_STAGES)} のみ（指定: {stage}）。artifact_policy.yaml を参照。")
     params = params or {}

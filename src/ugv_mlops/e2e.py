@@ -101,7 +101,9 @@ def build_e2e_dataset(
 
 
 def train_e2e(dataset_version_id: str, stage: str | None = None) -> dict:
-    stage = stage or settings.default_learning_stage
+    from ugv_mlops.stages import assert_learning_stage
+
+    stage = assert_learning_stage(stage)
     work = settings.work_path / "train" / dataset_version_id
     if work.exists():
         shutil.rmtree(work)

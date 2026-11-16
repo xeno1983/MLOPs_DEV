@@ -1,7 +1,8 @@
 # 既定（プロファイルなし）= 中核: bag取込・パース・アノテーション・データセット・学習結果
-#   postgres garage garage-init catalog worker portal mlflow labelstudio
+#   postgres seaweed seaweed-init lakefs lakefs-init catalog worker portal mlflow labelstudio
 # 拡張: docker compose --profile full up -d
-#   redis lakefs gitea prometheus grafana
+#   redis gitea prometheus grafana
+# オブジェクトストア: SeaweedFS all-in-one S3（旧 Garage）。データ版: LakeFS（旧 DVC）
 services:
   postgres:
     image: postgres:16-alpine
@@ -35,40 +36,51 @@ services:
       retries: 10
     restart: unless-stopped
 
-  garage:
-    image: dxflrs/garage:v2.3.0
-    command: ["/garage", "server", "--single-node", "--default-bucket"]
-    environment:
-      GARAGE_DEFAULT_ACCESS_KEY: ${MINIO_ROOT_USER}
-      GARAGE_DEFAULT_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      GARAGE_DEFAULT_BUCKET: raw
+  seaweed:
+    # all-in-one: master+volume+filer+S3（design-seaweed-lakefs.md D1）
+    image: chrislusf/seaweedfs:3.80
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+      - -master.volumeSizeLimitMB=1024
     volumes:
-      - ./configs/garage.toml:/etc/garage.toml:ro
-      - garage-meta:/var/lib/garage/meta
-      - garage-data:/var/lib/garage/data
+      - seaweed-data:/data
+      - ./configs/seaweed/s3.json:/etc/seaweedfs/s3.json:ro
     ports:
-      - "9000:3900"
-      - "3903:3903"
+      # ホストへは S3 のみ（:8080 は portal と衝突するため volume/filer は非公開）
+      - "9000:8333"
     healthcheck:
-      test: ["CMD", "/garage", "status"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O- http://127.0.0.1:9333/cluster/status | grep -q Leader || exit 1",
+        ]
       interval: 5s
       timeout: 5s
-      retries: 24
+      retries: 30
       start_period: 15s
     restart: unless-stopped
 
-  garage-init:
+  seaweed-init:
     image: python:3.12-slim-bookworm
     depends_on:
-      garage:
+      seaweed:
         condition: service_healthy
     environment:
-      GARAGE_ADMIN_URL: http://garage:3903
-      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
-      GARAGE_DEFAULT_ACCESS_KEY: ${MINIO_ROOT_USER}
+      SEAWEED_S3_ENDPOINT: seaweed:8333
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SECURE: "false"
+      S3_REGION: us-east-1
     volumes:
-      - ./scripts/garage_init.py:/init.py:ro
-    command: ["python", "/init.py"]
+      - ./scripts/seaweed_init.py:/init.py:ro
+    command:
+      - bash
+      - -c
+      - pip install -q minio==7.2.9 && python /init.py
     restart: "no"
 
   mlflow:
@@ -77,13 +89,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      garage-init:
+      seaweed-init:
         condition: service_completed_successfully
     environment:
-      MLFLOW_S3_ENDPOINT_URL: http://garage:3900
+      MLFLOW_S3_ENDPOINT_URL: http://seaweed:8333
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-      AWS_DEFAULT_REGION: garage
+      AWS_DEFAULT_REGION: us-east-1
       AWS_EC2_METADATA_DISABLED: "true"
       AWS_CONFIG_FILE: /aws/config
       MLFLOW_S3_IGNORE_TLS_WARNING: "true"
@@ -107,12 +119,12 @@ services:
     restart: unless-stopped
 
   lakefs:
-    image: treeverse/lakefs:latest
-    profiles: ["full"]
+    # 中核（DVC 置き換え）。イメージは固定
+    image: treeverse/lakefs:1.48.0
     depends_on:
       postgres:
         condition: service_healthy
-      garage-init:
+      seaweed-init:
         condition: service_completed_successfully
     environment:
       LAKEFS_DATABASE_TYPE: postgres
@@ -120,29 +132,57 @@ services:
       LAKEFS_DATABASE_POSTGRES_CONNECTION_STRING: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/lakefs?sslmode=disable
       LAKEFS_AUTH_ENCRYPT_SECRET_KEY: ${LAKEFS_AUTH_ENCRYPT_SECRET_KEY}
       LAKEFS_BLOCKSTORE_TYPE: s3
-      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://garage:3900
+      LAKEFS_BLOCKSTORE_S3_ENDPOINT: http://seaweed:8333
       LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE: "true"
       LAKEFS_BLOCKSTORE_S3_DISCOVER_BUCKET_REGION: "false"
-      LAKEFS_BLOCKSTORE_S3_REGION: garage
+      LAKEFS_BLOCKSTORE_S3_REGION: us-east-1
       LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       LAKEFS_STATS_ENABLED: "false"
       LAKEFS_SECURITY_CHECK_LATEST_VERSION: "false"
       LAKEFS_SECURITY_AUDIT_CHECK_INTERVAL: 87600h
+      # Postgres 利用時は INSTALLATION_* による自動 setup は効かない → lakefs-init を使う
       LAKEFS_INSTALLATION_USER_NAME: ugv
       LAKEFS_INSTALLATION_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
       LAKEFS_INSTALLATION_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
       LAKEFS_GATEWAYS_S3_DOMAIN_NAME: s3.local
     ports:
       - "8001:8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O- http://127.0.0.1:8000/api/v1/healthcheck || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
     restart: unless-stopped
 
+  lakefs-init:
+    # Postgres DB では setup API が必須（local/mem のみ INSTALLATION_* 自動）
+    image: python:3.12-slim-bookworm
+    depends_on:
+      lakefs:
+        condition: service_healthy
+    environment:
+      LAKEFS_URL: http://lakefs:8000
+      LAKEFS_INSTALLATION_USER_NAME: ugv
+      LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
+      LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
+    volumes:
+      - ./scripts/lakefs_init.py:/init.py:ro
+    command: ["python", "/init.py"]
+    restart: "no"
+
   labelstudio:
-    image: heartexlabs/label-studio:latest
+    # latest だと auth API が変わるため固定（integrations._ls_headers は 1.23 セッション方式対応）
+    image: heartexlabs/label-studio:1.23.0
     depends_on:
       postgres:
         condition: service_healthy
-      garage-init:
+      seaweed-init:
         condition: service_completed_successfully
     environment:
       DJANGO_DB: default
@@ -192,23 +232,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      garage-init:
+      seaweed-init:
+        condition: service_completed_successfully
+      lakefs-init:
         condition: service_completed_successfully
     environment:
       CATALOG_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/catalog
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: garage:3900
+      MINIO_ENDPOINT: seaweed:8333
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_SECURE: "false"
-      S3_REGION: garage
+      S3_REGION: us-east-1
       MLFLOW_TRACKING_URI: http://mlflow:5000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-      AWS_DEFAULT_REGION: garage
+      AWS_DEFAULT_REGION: us-east-1
       AWS_EC2_METADATA_DISABLED: "true"
       AWS_CONFIG_FILE: /app/configs/aws/config
-      MLFLOW_S3_ENDPOINT_URL: http://garage:3900
+      MLFLOW_S3_ENDPOINT_URL: http://seaweed:8333
       ARTIFACT_POLICY_PATH: /app/configs/artifact_policy.yaml
       SIGNING_KEY_PATH: /keys/ed25519.pem
       SIGNING_PUB_PATH: /keys/ed25519.pub
@@ -222,6 +264,7 @@ services:
       LAKEFS_URL: http://lakefs:8000
       LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
       LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
+      LAKEFS_REQUIRED: ${LAKEFS_REQUIRED:-true}
       GITEA_URL: http://gitea:3000
       GRAFANA_URL: http://grafana:3000
       PROMETHEUS_URL: http://prometheus:9090
@@ -231,8 +274,6 @@ services:
       ROSBAG_LIDAR_STRIDE: ${ROSBAG_LIDAR_STRIDE:-20}
       ROSBAG_MAX_LIDAR_KEYFRAMES: ${ROSBAG_MAX_LIDAR_KEYFRAMES:-80}
       E2E_ACTION_MAX_DT_SEC: ${E2E_ACTION_MAX_DT_SEC:-0.25}
-      DVC_ROOT: /app/repo
-      DVC_REMOTE: garage-docker
       ANNOTATE_DIR: /data/annotate
       AUTOWARE_E2E_ROOT: /autoware_e2e
       XTREME1_URL: ${XTREME1_URL:-http://host.docker.internal:8190}
@@ -272,21 +313,23 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_healthy
+      lakefs-init:
+        condition: service_completed_successfully
     environment:
       CATALOG_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/catalog
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: garage:3900
+      MINIO_ENDPOINT: seaweed:8333
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_SECURE: "false"
-      S3_REGION: garage
+      S3_REGION: us-east-1
       MLFLOW_TRACKING_URI: http://mlflow:5000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-      AWS_DEFAULT_REGION: garage
+      AWS_DEFAULT_REGION: us-east-1
       AWS_EC2_METADATA_DISABLED: "true"
       AWS_CONFIG_FILE: /app/configs/aws/config
-      MLFLOW_S3_ENDPOINT_URL: http://garage:3900
+      MLFLOW_S3_ENDPOINT_URL: http://seaweed:8333
       ARTIFACT_POLICY_PATH: /app/configs/artifact_policy.yaml
       SIGNING_KEY_PATH: /keys/ed25519.pem
       SIGNING_PUB_PATH: /keys/ed25519.pub
@@ -300,6 +343,7 @@ services:
       LAKEFS_URL: http://lakefs:8000
       LAKEFS_ACCESS_KEY_ID: ${LAKEFS_ACCESS_KEY_ID}
       LAKEFS_SECRET_ACCESS_KEY: ${LAKEFS_SECRET_ACCESS_KEY}
+      LAKEFS_REQUIRED: ${LAKEFS_REQUIRED:-true}
       GITEA_URL: http://gitea:3000
       GRAFANA_URL: http://grafana:3000
       PROMETHEUS_URL: http://prometheus:9090
@@ -314,8 +358,6 @@ services:
       YOLOX_IMGSZ: ${YOLOX_IMGSZ:-416}
       YOLOX_TRAIN_STEPS: ${YOLOX_TRAIN_STEPS:-8}
       YOLOX_MAX_TRAIN_IMAGES: ${YOLOX_MAX_TRAIN_IMAGES:-24}
-      DVC_ROOT: /app/repo
-      DVC_REMOTE: garage-docker
       ANNOTATE_DIR: /data/annotate
       AUTOWARE_E2E_ROOT: /autoware_e2e
       XTREME1_URL: ${XTREME1_URL:-http://host.docker.internal:8190}
@@ -379,8 +421,7 @@ services:
 volumes:
   pgdata:
   redisdata:
-  garage-meta:
-  garage-data:
+  seaweed-data:
   lsdata:
   giteadata:
   promdata:

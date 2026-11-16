@@ -81,11 +81,10 @@ class SyncReq(BaseModel):
     vehicle_id: str = "UGV-01"
 
 
-class DvcPublishReq(BaseModel):
+class LakeFsPublishReq(BaseModel):
     mission_id: str | None = None
     dataset_version_id: str | None = None
     object_uri: str | None = None
-    push: bool = True
 
 
 class MissionImportReq(BaseModel):
@@ -333,11 +332,11 @@ def pipeline() -> dict:
             "id": "ingest",
             "n": 3,
             "title": "カタログへ取り込む",
-            "tool": "Catalog / Garage raw",
+            "tool": "Catalog / SeaweedFS raw",
             "phase": "取得",
             "count": samples,
             "unit": "サンプル",
-            "how": "取込（追跡・パース・保管）。cameras / lidar / cmd_vel を Garage と DVC へ。",
+            "how": "取込（追跡・パース・保管）。cameras / lidar / cmd_vel を SeaweedFS と LakeFS へ。",
         },
         {
             "id": "data_qa",
@@ -905,12 +904,12 @@ def integrations() -> dict:
     return probe()
 
 
-@app.get("/dvc")
-def dvc_status() -> dict:
+@app.get("/lakefs")
+def lakefs_status() -> dict:
     from ugv_mlops.bag_pipeline import list_missions
-    from ugv_mlops.dvc_sync import status as dvc_status_fn
+    from ugv_mlops.lakefs_sync import status as lakefs_status_fn
 
-    st = dvc_status_fn()
+    st = lakefs_status_fn()
     st["missions"] = list_missions()
     return st
 
@@ -1107,18 +1106,12 @@ def mission_store(mission_id: str, push: bool = True) -> dict:
     return {"job_id": enqueue("bag_store", {"mission_id": mission_id, "push": push})}
 
 
-@app.post("/dvc/publish")
-def dvc_publish(req: DvcPublishReq) -> dict:
+@app.post("/lakefs/publish")
+def lakefs_publish(req: LakeFsPublishReq) -> dict:
     if not req.mission_id and not (req.dataset_version_id and req.object_uri):
         raise HTTPException(400, "mission_id か dataset_version_id+object_uri が必要です")
-    JOBS_ENQUEUED.labels("dvc_publish").inc()
-    return {"job_id": enqueue("dvc_publish", req.model_dump())}
-
-
-@app.post("/dvc/pull")
-def dvc_pull(target: str | None = None) -> dict:
-    JOBS_ENQUEUED.labels("dvc_pull").inc()
-    return {"job_id": enqueue("dvc_pull", {"target": target})}
+    JOBS_ENQUEUED.labels("lakefs_publish").inc()
+    return {"job_id": enqueue("lakefs_publish", req.model_dump())}
 
 
 @app.get("/annotate")

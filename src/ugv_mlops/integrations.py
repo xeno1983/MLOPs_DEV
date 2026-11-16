@@ -26,21 +26,20 @@ LS_PROJECT = "UGV-obstacle-cls"
 LAKEFS_REPO = "ugv-datasets"
 
 
-CORE_TOOLS = frozenset({"catalog", "postgres", "garage", "mlflow", "labelstudio"})
+CORE_TOOLS = frozenset({"catalog", "postgres", "seaweed", "mlflow", "labelstudio", "lakefs"})
 
 
 def probe() -> dict[str, dict[str, Any]]:
     """Reachability + whether Catalog actually exchanges data with each tool."""
     out = {
         "catalog": _ok("ジョブとメタデータの中枢。ポータル・ワーカーがここを叩く。", True),
-        "postgres": _probe_http_skip("カタログ／MLflow／Label Studio のDB。", True),
-        "garage": _probe_garage(),
+        "postgres": _probe_http_skip("カタログ／MLflow／Label Studio／LakeFS のDB。", True),
+        "seaweed": _probe_seaweed(),
         "mlflow": _probe_mlflow(),
         "labelstudio": _probe_labelstudio(),
-        "dvc": _probe_dvc(),
+        "lakefs": _probe_lakefs(),
         "salt": _probe_salt(),
         "xtreme1": _probe_xtreme1(),
-        "lakefs": _probe_lakefs(),
         "gitea": _probe_gitea(),
         "grafana": _probe_url(settings.grafana_url + "/api/health", "Prometheus をデータソースに接続済み。パイプライン本体は未接続。拡張プロファイル。", wired=False),
         "prometheus": _probe_url(settings.prometheus_url + "/-/ready", "Catalog /metrics をスクレイプ。拡張プロファイル。", wired=True),
@@ -125,50 +124,23 @@ def pull_labelstudio_annotations() -> dict:
 
 
 def commit_dataset_to_lakefs(dataset_version_id: str, object_uri: str) -> dict:
-    from ugv_mlops.storage import client, parse_s3_uri
+    from ugv_mlops.lakefs_sync import commit_dataset_zip
 
-    _lakefs_ensure_repo()
-    bucket, key = parse_s3_uri(object_uri)
-    data = client().get_object(bucket, key).read()
-    path = f"datasets/{dataset_version_id}.zip"
-    put = httpx.put(
-        f"{settings.lakefs_url}/api/v1/repositories/{LAKEFS_REPO}/branches/main/objects",
-        params={"path": path},
-        headers=_lakefs_headers() | {"Content-Type": "application/octet-stream"},
-        content=data,
-        timeout=120.0,
-    )
-    put.raise_for_status()
-    commit = httpx.post(
-        f"{settings.lakefs_url}/api/v1/repositories/{LAKEFS_REPO}/branches/main/commits",
-        headers=_lakefs_headers(),
-        json={"message": f"dataset {dataset_version_id}", "metadata": {"source": object_uri}},
-        timeout=30.0,
-    )
-    commit.raise_for_status()
-    body = commit.json()
-    return {
-        "repo": LAKEFS_REPO,
-        "path": path,
-        "commit_id": body.get("id") or body.get("commit_id"),
-        "uri": f"lakefs://{LAKEFS_REPO}/main/{path}",
-    }
+    return commit_dataset_zip(dataset_version_id, object_uri)
 
 
 def attach_dataset_remotes(dataset_version_id: str, object_uri: str) -> dict:
-    """LakeFS（任意）と DVC→Garage（既定の大きい成果物の版）。どちらも失敗しても学習は続く。"""
+    """LakeFS に dataset を commit（P4: LAKEFS_REQUIRED 既定 true で fail-closed）。"""
+    from ugv_mlops.lakefs_sync import required
+
     out: dict[str, Any] = {}
     try:
         out["lakefs"] = commit_dataset_to_lakefs(dataset_version_id, object_uri)
         out["lakefs"]["ok"] = True
     except Exception as exc:
         out["lakefs"] = {"ok": False, "error": str(exc)}
-    try:
-        from ugv_mlops.dvc_sync import publish_dataset
-
-        out["dvc"] = publish_dataset(dataset_version_id, object_uri)
-    except Exception as exc:
-        out["dvc"] = {"ok": False, "error": str(exc)}
+        if required():
+            raise
     return out
 
 
@@ -197,22 +169,6 @@ def _probe_url(url: str, detail: str, wired: bool) -> dict:
         return _fail(str(exc), wired)
 
 
-def _probe_dvc() -> dict:
-    try:
-        from ugv_mlops.dvc_sync import status as dvc_status
-
-        st = dvc_status()
-        wired = bool(st.get("pointers"))
-        detail = st.get("detail") or "DVC ポインタ + Garage s3://dvc"
-        if not st.get("initialized"):
-            return _fail("DVC 未初期化（リポジトリの .dvc/config）", False)
-        if not st.get("dvc_installed"):
-            return _ok("ポインタ設定済み。add/push は Worker（requirements-dvc.txt）。", wired, st)
-        return _ok(detail, wired, st)
-    except Exception as exc:
-        return _fail(str(exc), False)
-
-
 def _probe_salt() -> dict:
     root = Path(settings.autoware_e2e_root)
     salt = root / "SALT" / "bin" / "SALT"
@@ -229,12 +185,16 @@ def _probe_xtreme1() -> dict:
     )
 
 
-def _probe_garage() -> dict:
+def _probe_seaweed() -> dict:
     try:
         from ugv_mlops.storage import client
 
         ok = client().bucket_exists("raw")
-        return _ok("取込・データセット・モデル・パッケージの実体を保存（Garage S3）。Catalog が読み書きする。", True, {"raw_bucket": ok})
+        return _ok(
+            "取込・データセット・モデル・パッケージの実体（SeaweedFS S3）。Catalog が読み書きする。",
+            True,
+            {"raw_bucket": ok},
+        )
     except Exception as exc:
         return _fail(str(exc), True)
 
@@ -243,7 +203,7 @@ def _probe_mlflow() -> dict:
     try:
         r = httpx.get(f"{settings.mlflow_tracking_uri}/health", timeout=3.0)
         wired = r.status_code < 400
-        return _ok("学習ジョブが run / 指標 / 成果物を記録。成果物は Garage の mlflow バケット。", wired)
+        return _ok("学習ジョブが run / 指標 / 成果物を記録。成果物は SeaweedFS の mlflow バケット。", wired)
     except Exception as exc:
         return _fail(str(exc), True)
 
@@ -269,24 +229,19 @@ def _probe_labelstudio() -> dict:
 
 
 def _probe_lakefs() -> dict:
-    try:
-        r = httpx.get(f"{settings.lakefs_url}/api/v1/healthcheck", timeout=3.0)
-        if r.status_code >= 500:
-            return _fail(f"HTTP {r.status_code}", False)
-        listed = httpx.get(
-            f"{settings.lakefs_url}/api/v1/repositories",
-            headers=_lakefs_headers(),
-            timeout=8.0,
-        )
-        if listed.status_code < 400:
-            return _ok("データセット zip を Git ライクにコミット。Garage lakefs バケットをブロックストアに使用。", True)
+    from ugv_mlops.lakefs_sync import status as lakefs_status
+
+    st = lakefs_status()
+    if st.get("wired"):
+        return _ok(st.get("detail") or "raw/datasets の版管理（SeaweedFS lakefs バケット）。", True, st)
+    if st.get("ok"):
         return {
             "ok": True,
             "wired": False,
-            "detail": f"起動済み。初期セットアップまたは認証が未完了 (HTTP {listed.status_code})",
+            "detail": st.get("detail") or st.get("error") or "LakeFS 認証前",
+            "required": st.get("required"),
         }
-    except Exception as exc:
-        return _fail(str(exc), False)
+    return _fail(st.get("error") or "LakeFS unreachable", True)
 
 
 def _probe_gitea() -> dict:
@@ -307,6 +262,7 @@ def _probe_gitea() -> dict:
 def _ls_headers() -> dict[str, str]:
     if settings.label_studio_api_key:
         return {"Authorization": f"Token {settings.label_studio_api_key}"}
+    # 旧 API（〜1.1x）: /api/token/login
     for path, payload in (
         ("/api/token/login", {"email": settings.label_studio_username, "password": settings.label_studio_password}),
         ("/api/auth/login", {"email": settings.label_studio_username, "password": settings.label_studio_password}),
@@ -317,8 +273,70 @@ def _ls_headers() -> dict[str, str]:
             body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
             token = body.get("token") or body.get("key") or body.get("access_token")
             if token:
-                return {"Authorization": f"Token {token}"}
+                headers = {"Authorization": f"Token {token}"}
+                if _ls_auth_works(headers):
+                    return headers
+    # LS 1.23+: legacy personal Token は無効化されていることが多い。セッション Cookie で API する。
+    cookie_headers = _ls_cookie_headers()
+    if cookie_headers and _ls_auth_works(cookie_headers):
+        return cookie_headers
     raise RuntimeError("Label Studio にログインできません。ユーザ作成とパスワードを確認してください。")
+
+
+def _ls_auth_works(headers: dict[str, str]) -> bool:
+    try:
+        r = httpx.get(
+            f"{settings.label_studio_url.rstrip('/')}/api/projects",
+            headers=headers,
+            timeout=10.0,
+        )
+        return r.status_code < 400
+    except Exception:
+        return False
+
+
+def _ls_cookie_headers() -> dict[str, str] | None:
+    """CSRF 付きフォームログイン後の Cookie を Authorization 代わりに返す。"""
+    import re
+
+    base = settings.label_studio_url.rstrip("/")
+    with httpx.Client(base_url=base, timeout=15.0, follow_redirects=True) as client:
+        page = client.get("/user/login/")
+        if page.status_code >= 500:
+            return None
+        m = re.search(
+            r'name=["\']csrfmiddlewaretoken["\']\s+value=["\']([^"\']+)',
+            page.text or "",
+        )
+        csrf = m.group(1) if m else client.cookies.get("csrftoken")
+        if not csrf:
+            return None
+        headers = {
+            "Referer": f"{base}/user/login/",
+            "X-CSRFToken": csrf,
+        }
+        form = {
+            "email": settings.label_studio_username,
+            "password": settings.label_studio_password,
+            "csrfmiddlewaretoken": csrf,
+        }
+        login = client.post("/user/login/", data=form, headers=headers)
+        if login.status_code >= 400:
+            return None
+        # whoami でセッション確立を確認
+        who = client.get("/api/current-user/whoami")
+        if who.status_code >= 400:
+            return None
+        cookie = "; ".join(f"{k}={v}" for k, v in client.cookies.items())
+        if not cookie:
+            return None
+        out = {"Cookie": cookie}
+        # 以降の POST 用に CSRF も付与
+        csrftoken = client.cookies.get("csrftoken") or csrf
+        if csrftoken:
+            out["X-CSRFToken"] = csrftoken
+            out["Referer"] = base + "/"
+        return out
 
 
 def _ls_ensure_project(headers: dict[str, str]) -> int:

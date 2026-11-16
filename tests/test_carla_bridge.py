@@ -17,6 +17,7 @@ _db.ensure_schema = lambda: None  # type: ignore
 from ugv_mlops.carla_bridge import (  # noqa: E402
     _assert_allowed,
     _looks_like_bag,
+    _resolve_source,
     _sanitize_mission_id,
     record_command_hint,
 )
@@ -54,5 +55,24 @@ def test_assert_allowed_rejects_work_path(tmp_path: Path, monkeypatch):
 
 def test_record_command_hint():
     h = record_command_hint("unit_test_run")
-    assert "ros2 bag record" in h["command"]
+    assert "start-carla-offroad.ps1" in h["command"]
+    assert h.get("preferred") == "start-carla-offroad.ps1"
+    assert "ros2 bag record" in h["command"]  # 代替経路も併記
     assert "unit_test_run" in h["output_dir"]
+
+
+def test_resolve_source_by_bag_name(tmp_path: Path, monkeypatch):
+    root = tmp_path / "aw"
+    bag = root / "datasets" / "carla_bags" / "flow_unit"
+    bag.mkdir(parents=True)
+    (bag / "metadata.yaml").write_text("rosbag2_bagfile_information: {}\n")
+    (bag / "a.db3").write_bytes(b"db")
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    monkeypatch.setattr(settings, "inbox_dir", str(inbox))
+
+    hit = _resolve_source("flow_unit", root)
+    assert hit == bag.resolve()
+
+    hit2 = _resolve_source("datasets/carla_bags/flow_unit", root)
+    assert hit2 == bag.resolve()

@@ -12,16 +12,16 @@
 |----|---------|--------------------------|------|
 | コード | GitHub | この Git。任意で Gitea `:3000` | 学習コード・ポリシー。ホットパスに載せない |
 | **シミュ生成** | Genesis が毎 step 観測・報酬 | **工程1。** Autoware_e2e / CARLA（compose 外）→ `data/inbox` | 教師付き走行ログを bag で落とす。Catalog は到着後だけ知る |
-| 実験ノート | MLflow（`logs/mlflow`） | MLflow `:5000`。成果物は Garage `mlflow` | パラメータ・指標。**学習のたびに書く** |
-| 大きい成果物の版 | DVC ポインタ + MinIO `pai-dvc` | **DVC ポインタ + Garage `s3://dvc`**。学習が参照する ID は Catalog `dataset_version` | Git に zip/重みを置かない。ingest / 版切りの区切りでだけ `dvc push` |
-| 研究用倉庫 | MinIO | Garage（S3）`raw` / `datasets` / `models` / `mlflow` / `dvc` | PC 間・再開用の実体 |
+| 実験ノート | MLflow（`logs/mlflow`） | MLflow `:5000`。成果物は SeaweedFS `mlflow` | パラメータ・指標。**学習のたびに書く** |
+| 大きい成果物の版 | DVC ポインタ + MinIO `pai-dvc` | **LakeFS**（raw/datasets commit）。学習が参照する ID は Catalog `dataset_version` | Git に zip/重みを置かない。ingest / 版切りで LakeFS commit |
+| 研究用倉庫 | MinIO | **SeaweedFS（S3）** `raw` / `datasets` / `models` / `mlflow` / `lakefs` | PC 間・再開用の実体 |
 | **データ／ラベル確認** | 推論 mp4・メニュー確認 | **工程4** データタブ / `data-qa`。**工程6** Xtreme1 | 空 bag・トピック欠損・ラベルずれを版切り前に止める |
 | **軽量化** | （実機向けに小さい `best.pt`） | **工程10** `POST /models/export`（ONNX 等）。TensorRT は車載側 | S1 サイズ制限と推論形式に合わせる |
 | 現場への配達 | Mender（`best.pt` → `.mender`） | `POST /gate` → export → `/packages` → `/sync` → chunk。配送先 `data/work/vehicles/<車両>/inbox/` | 合格・軽量化したものだけ。sha256 検証・失敗時ロールバック |
 | **アノテーション** | なし（シミュが教師を出す） | **工程5 必須（知覚）。** Label Studio / SAM / SALT。確認は工程6 Xtreme1 | 詳細は [annotation.md](annotation.md) |
 | 人が見る入口 | 起動メニュー 9 | ポータル http://127.0.0.1:8080 | 状態確認とジョブ投入。ID/パスワードは [usage.md](usage.md#画面の場所と初期-id--パスワード) |
 
-四脚の `dvc_sync publish --select best` に相当するのが **ゲート**。metrics のピーク近い重みを人手で抜く代わりに、Catalog が閾値を見て `model_version` を切る。
+四脚の publish --select best` に相当するのが **ゲート**。metrics のピーク近い重みを人手で抜く代わりに、Catalog が閾値を見て `model_version` を切る。
 
 四脚に無い段が **アノテーション** である。知覚分類・検出はラベル無しでは `datasets/build` が失敗する（`JOIN annotation`。未ラベルは zip に入らない）。
 
@@ -37,7 +37,7 @@
     → data/inbox/<mission>/     工程2
               │
               ├─ POST /ingest          工程3（まだ教師なし）
-              │     Garage raw + learning_sample + DVC 区切り
+              │     SeaweedFS raw + learning_sample + LakeFS commit
               │
               ├─ POST /data-qa         工程4（カメラ・action・トピック確認）
               │
@@ -53,7 +53,7 @@
               └─ packages → sync       工程11 → data/work/vehicles/*/inbox（TensorRT は車載）
 ```
 
-中核（既定の `docker compose up -d`）は **inbox → ingest → 確認 → アノテ → データセット → train / MLflow → ゲート → 軽量化 → 梱包同期**。LakeFS / Gitea / Grafana は `--profile full`。CARLA は載せない。
+中核（既定の `docker compose up -d`）は **SeaweedFS + LakeFS + inbox → ingest → 確認 → アノテ → データセット → train / MLflow → ゲート → 軽量化 → 梱包同期**。Gitea / Grafana / Redis は `--profile full`。CARLA は載せない。
 
 ```mermaid
 flowchart LR
@@ -61,12 +61,15 @@ flowchart LR
     IN[data/inbox]
     CAT[Catalog / Worker]
     LS[Label Studio]
-    GAR[Garage]
+    SW[SeaweedFS]
+    LK[LakeFS]
     MF[MLflow]
     IN --> CAT
     CAT -->|カメラ import| LS
     LS -->|人がラベルしてから export| CAT
-    CAT -->|ラベル済みだけ zip| GAR
+    CAT -->|ラベル済みだけ zip| SW
+    CAT -->|raw/datasets commit| LK
+    LK -->|blockstore| SW
     CAT --> MF
   end
   subgraph field [現場 — 四脚の Mender 相当]
@@ -109,7 +112,7 @@ Invoke-RestMethod -Method POST http://localhost:8000/ingest `
   -Body '{"path":"/data/inbox/M-20260831-001","source_type":"physical_media"}'
 ```
 
-Worker が bag をパースする。カメラ JPEG、IMU/GNSS/LiDAR/cmd_vel の jsonl、元 bag が Garage `raw` へ入る。
+Worker が bag をパースする。カメラ JPEG、IMU/GNSS/LiDAR/cmd_vel の jsonl、元 bag が SeaweedFS `raw` へ入る。
 
 ### 4. アノテーションする（知覚では必須。飛ばさない）
 
@@ -123,7 +126,7 @@ ingest 完了は「ファイルがカタログに載った」だけである。�
 
 手順の本体は [annotation.md](annotation.md)。ポータルの「ラベル済み」件数が 0 のまま 5 へ進まない。
 
-### 5. データセット版を切る（四脚の `dvc_sync publish`）
+### 5. データセット版を切る（四脚の publish`）
 
 ```powershell
 Invoke-RestMethod -Method POST http://localhost:8000/datasets/build `
@@ -141,7 +144,7 @@ Invoke-RestMethod -Method POST http://localhost:8000/train `
   -Body '{"dataset_version_id":"<id>"}'
 ```
 
-指標は MLflow。重みは Garage `models`。`training_run.run_id` は MLflow の run_id と同じ。
+指標は MLflow。重みは SeaweedFS `models`。`training_run.run_id` は MLflow の run_id と同じ。
 
 ### 7. ゲート（四脚の `--select best`）
 
@@ -164,7 +167,7 @@ Invoke-RestMethod -Method POST http://localhost:8000/sync `
   -Body '{"package_id":"<id>","vehicle_id":"UGV-01"}'
 ```
 
-Garage `packages` が倉庫、`/sync` のチャンクが配達。失敗時はロールバック。OS イメージ更新とは分け、モデル zip だけを送る（四脚が rootfs と `pai-model` を分けたのと同じ）。
+SeaweedFS `packages` が倉庫、`/sync` のチャンクが配達。失敗時はロールバック。OS イメージ更新とは分け、モデル zip だけを送る（四脚が rootfs と `pai-model` を分けたのと同じ）。
 
 一気通貫の煙試験は `POST /demo` / `/demo-e2e` / `/demo-yolox` / `/demo-rosbag`。
 
@@ -186,10 +189,10 @@ Garage `packages` が倉庫、`/sync` のチャンクが配達。失敗時はロ
 
 | 何 | 四脚 | 自動運転 |
 |----|------|----------|
-| 生データ | Genesis が毎 step 生成 | `data/inbox` → Garage `raw` |
+| 生データ | Genesis が毎 step 生成 | `data/inbox` → SeaweedFS `raw` |
 | 教師 | シミュの報酬・CPG 教師 | **人が付けた `annotation`**（E2E だけ cmd_vel） |
 | 実験 DB | `logs/mlflow/mlflow.db` | MLflow + Postgres `mlflow` |
-| 抜粋した最良重み | `artifacts/checkpoints/<stage>/best.pt` | Garage `models` + `model_version` |
+| 抜粋した最良重み | `artifacts/checkpoints/<stage>/best.pt` | SeaweedFS `models` + `model_version` |
 | 端末上の active | `/data/pai/models/active/best.pt` | 同期後の車載パッケージ（ゲート通過分） |
 
 ---
@@ -200,8 +203,8 @@ Garage `packages` が倉庫、`/sync` のチャンクが配達。失敗時はロ
 
 - ミッションごと ingest したあと、**知覚は必ずアノテーション**（Label Studio / SAM / SALT。確認は Xtreme1）。未ラベルでデータセットを切らない
 - 学習のたびに MLflow へメトリクス
-- **区切りでだけ** DVC push・dataset 版切り・ゲート・梱包（四脚の publish / Mender と同じ）
-- 倉庫（Garage）と配達（sync）を分ける。車載から Garage を直接 wget しない
+- **区切りでだけ** LakeFS commit・dataset 版切り・ゲート・梱包（四脚の publish / Mender と同じ）
+- 倉庫（SeaweedFS）と配達（sync）を分ける。車載から SeaweedFS を直接 wget しない
 
 やらないこと:
 
@@ -209,7 +212,7 @@ Garage `packages` が倉庫、`/sync` のチャンクが配達。失敗時はロ
 - フレームごと・iteration ごとにデータセット zip やパッケージを切らない
 - `raw` 全履歴を車載へ送らない
 - ゲート前の重みを本番同期しない
-- 四脚の MinIO / Mender をこの compose に足さない（倉庫は Garage、配達は sync。DVC リモートも Garage）
+- 四脚の MinIO / Mender をこの compose に足さない（倉庫は SeaweedFS、配達は sync。版管理は LakeFS）
 - Xtreme1 を Freespace マスク作業に使わない
 - 火力統制とは混ぜない
 
@@ -217,4 +220,4 @@ Garage `packages` が倉庫、`/sync` のチャンクが配達。失敗時はロ
 
 ## 四脚 PJ とサーバを共用する場合
 
-同じホストの MLflow `:5000` と Garage `:9000` を四脚学習から使ってよい。**experiment 名と S3 プレフィックスを分ける**（例: `quadruped` / `ugv`、`s3://models/quad/`）。Catalog の ingest〜ゲートは UGV の bag 契約向けなので、四脚の PPO ログは Catalog ジョブに載せない。
+同じホストの MLflow `:5000` と SeaweedFS `:9000` を四脚学習から使ってよい。**experiment 名と S3 プレフィックスを分ける**（例: `quadruped` / `ugv`、`s3://models/quad/`）。Catalog の ingest〜ゲートは UGV の bag 契約向けなので、四脚の PPO ログは Catalog ジョブに載せない。
