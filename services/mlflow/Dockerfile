@@ -9,6 +9,7 @@ WORKDIR /opt/mlflow
 
 RUN pip install \
         "mlflow==2.22.5" \
+        "sqlalchemy>=2.0.36,<2.1" \
         "psycopg2-binary==2.9.10" \
         "boto3==1.36.16"
 

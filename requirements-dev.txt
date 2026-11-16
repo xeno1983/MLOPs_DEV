@@ -1,0 +1,3 @@
+# CI / ローカル単体テスト
+-r requirements.txt
+pytest>=8.0.0

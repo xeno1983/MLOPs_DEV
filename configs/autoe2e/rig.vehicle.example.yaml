@@ -1,0 +1,58 @@
+# 自前車両 rosbag2 → AutoE2E 用 rig の例
+# 手順:
+#   1. bag を data/inbox/<mission_id>/ へ置く（metadata.yaml 付き rosbag2）
+#   2. python -m ugv_mlops.cli autoe2e-inspect -m <mission_id>
+#   3. python -m ugv_mlops.cli autoe2e-prepare -m <mission_id>
+#      → data/work/autoe2e/rigs/<mission_id>.yaml が自動生成される（本ファイルは手書き用テンプレ）
+#   4. ingest → build task=autoe2e / autoe2e-build
+#
+# AutoE2E が必須なのは「カメラ」と「ego pose」。
+# LiDAR / 生 IMU / 地図は学習に使わない。
+# pose が GNSS だけのときは prepare が /autoe2e/odometry を合成する。
+# 可能なら LIO / RTK の nav_msgs/Odometry を bag に入れて pose.topic に指定する。
+
+rig_id: vehicle-ugv-01
+base_frame: base_link
+
+cameras:
+  front:
+    topic: /sensing/camera/front/image_raw/compressed   # ← bag の実トピックに合わせる
+    camera_info: /sensing/camera/front/camera_info      # 無ければ下の intrinsics/extrinsic
+    frame: camera_front_optical
+    convention: optical
+    # camera_info が無いときだけ:
+    # extrinsic: {xyz: [0.5, 0.0, 1.2], rpy: [0.0, 0.0, 0.0]}
+    # intrinsics:
+    #   fx: 600.0
+    #   fy: 600.0
+    #   cx: 640.0
+    #   cy: 360.0
+    #   width: 1280
+    #   height: 720
+    #   distortion: []
+    #   model: plumb_bob
+
+  # 6cam 本番なら front_left / front_right / rear_left / rear / rear_right も同様に追加。
+  # 1cam の間は extract.fill_missing_slots: front で他スロットを複製（Stage A）。
+
+pose:
+  source: odom
+  # 既存ローカライズ:
+  # topic: /localization/kinematic_state
+  # GNSS 合成後（autoe2e-prepare）:
+  topic: /autoe2e/odometry
+
+extract:
+  rate_hz: 10.0
+  image_size: 512
+  front_native_size: 1024
+  fill_missing_slots: front
+  max_sync_ms: 80.0
+  max_pose_gap_s: 0.5
+  use_header_stamp: true
+  undistort: false
+  stop_speed_mps: 0.15
+  max_stop_s: 3.0
+  min_frames: 180
+  max_scene_s: 180.0
+  max_pose_step_m: 5.0

@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "ugv",
+      "credentials": [
+        {
+          "accessKey": "GKabcdef0123456789abcdef01234567",
+          "secretKey": "ugv_garage_secret_change_me_do_not_use_in_prod"
+        }
+      ],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    }
+  ]
+}
