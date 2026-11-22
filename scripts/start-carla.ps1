@@ -3,6 +3,7 @@
 param(
     [ValidateSet("window", "offscreen", "vulkan")]
     [string]$Mode = "window",
+    [string]$Map = "Town01",
     [switch]$NoGuiHint
 )
 
@@ -10,14 +11,22 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $runSh = "/mnt/c/Users/xeno1/MLOPS/scripts/run-carla-wsl.sh"
 
-Write-Host "Starting CARLA in WSL (MODE=$Mode)..."
-wsl -d Ubuntu -- bash -lc "sed -i 's/\r`$//' $runSh; chmod +x $runSh; export DISPLAY=:0; CARLA_MODE=$Mode bash $runSh"
+Write-Host "Starting CARLA in WSL (MODE=$Mode MAP=$Map)..."
+wsl -d Ubuntu -- bash -lc "sed -i 's/\r`$//' $runSh; chmod +x $runSh; export DISPLAY=:0; CARLA_MODE=$Mode CARLA_MAP=$Map bash $runSh"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "launch script reported failure — checking anyway..."
 }
 
 $wslIp = ((wsl -d Ubuntu -- hostname -I).Trim() -split '\s+')[0]
 Start-Sleep -Seconds 2
+
+# 0.9.15 は起動引数のマップが効かないことがある → Python で明示ロード
+$loadPy = "/mnt/c/Users/xeno1/MLOPS/scripts/_load_carla_map.py"
+Write-Host "Ensuring map $Map via Python API..."
+wsl -d Ubuntu -- bash -lc "sed -i 's/\r`$//' $loadPy; source `$HOME/.venv-carla915/bin/activate && python $loadPy --map $Map"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "WARN: map load returned $LASTEXITCODE (server may still be on default map)"
+}
 
 function Test-Port([string]$HostName, [int]$Port) {
     try {

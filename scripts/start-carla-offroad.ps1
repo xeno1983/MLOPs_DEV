@@ -31,11 +31,17 @@ function Test-Port([string]$HostName, [int]$Port) {
 
 if (-not $SkipServer) {
     if (-not (Test-Port "127.0.0.1" 2000)) {
-        Write-Host "Starting CARLA server..."
-        & (Join-Path $Root "scripts\start-carla.ps1") -Mode window -NoGuiHint
+        Write-Host "Starting CARLA server (map=$Map)..."
+        & (Join-Path $Root "scripts\start-carla.ps1") -Mode window -Map $Map -NoGuiHint
     } else {
-        Write-Host "CARLA already listening on :2000"
+        Write-Host "CARLA already listening on :2000 — loading map $Map"
+        $loadPy = "/mnt/c/Users/xeno1/MLOPS/scripts/_load_carla_map.py"
+        wsl -d $distro -- bash -lc "sed -i 's/\r`$//' $loadPy; source `$HOME/.venv-carla915/bin/activate && python $loadPy --map $Map" | Out-Host
     }
+} else {
+    Write-Host "SkipServer: loading map $Map on existing server"
+    $loadPy = "/mnt/c/Users/xeno1/MLOPS/scripts/_load_carla_map.py"
+    wsl -d $distro -- bash -lc "sed -i 's/\r`$//' $loadPy; source `$HOME/.venv-carla915/bin/activate && python $loadPy --map $Map" | Out-Host
 }
 
 # wait ready

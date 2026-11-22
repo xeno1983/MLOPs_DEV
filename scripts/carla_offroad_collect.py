@@ -45,8 +45,9 @@ CAMERA_SPECS: list[dict[str, Any]] = [
     {"id": "front_left", "x": 2.2, "y": -0.7, "z": 1.6, "yaw": -55.0, "fov": "90"},
     {"id": "front_right", "x": 2.2, "y": 0.7, "z": 1.6, "yaw": 55.0, "fov": "90"},
     {"id": "rear", "x": -2.4, "y": 0.0, "z": 1.6, "yaw": 180.0, "fov": "90"},
-    {"id": "left", "x": 0.4, "y": -1.1, "z": 1.6, "yaw": -90.0, "fov": "90"},
-    {"id": "right", "x": 0.4, "y": 1.1, "z": 1.6, "yaw": 90.0, "fov": "90"},
+    # AutoE2E slots: rear_left / rear_right（left/right 名は extract 非対応）
+    {"id": "rear_left", "x": 0.4, "y": -1.1, "z": 1.6, "yaw": -90.0, "fov": "90"},
+    {"id": "rear_right", "x": 0.4, "y": 1.1, "z": 1.6, "yaw": 90.0, "fov": "90"},
 ]
 
 # LiDAR（複数）。channels / range は 0.9.15 ray_cast 属性

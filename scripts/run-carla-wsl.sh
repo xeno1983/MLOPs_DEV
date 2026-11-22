@@ -23,6 +23,8 @@ sleep 2
 
 QUALITY="${CARLA_QUALITY:-Low}"
 MODE="${CARLA_MODE:-window}"
+# 既定マップ Town01（https://carla.readthedocs.io/en/latest/map_town01/）
+MAP="${CARLA_MAP:-Town01}"
 EXTRA=()
 case "$MODE" in
   offscreen) EXTRA+=(-RenderOffScreen) ;;
@@ -31,10 +33,11 @@ case "$MODE" in
 esac
 
 : > /tmp/carla-ue4.log
-setsid ./CarlaUE4.sh -quality-level="$QUALITY" "${EXTRA[@]}" \
+# UE4 起動引数のマップは /Game/Carla/Maps/<Name>
+setsid ./CarlaUE4.sh "/Game/Carla/Maps/${MAP}" -quality-level="$QUALITY" "${EXTRA[@]}" \
   -carla-rpc-port=2000 -carla-streaming-port=2001 \
   >> /tmp/carla-ue4.log 2>&1 &
-echo "PID=$! MODE=$MODE DISPLAY=$DISPLAY"
+echo "PID=$! MODE=$MODE MAP=$MAP DISPLAY=$DISPLAY"
 
 for i in $(seq 1 60); do
   if ss -ltn 2>/dev/null | grep -q ':2000'; then
