@@ -1,6 +1,6 @@
 # Windows 新規環境の構築手順
 
-1 台の Windows PC に、本スタック（bag 取込 → アノテ → データセット → MLflow）をゼロから載せる手順です。載せたあとの日常操作は [usage.md](usage.md)、ID / パスワードは [usage.md の一覧](usage.md#画面の場所と初期-id--パスワード)、閉鎖網への再搬入は [airgap.md](airgap.md)。
+1 台の Windows PC に、本スタック（**11 工程**: シミュ／inbox → 取込確認 → アノテ → 学習 → ゲート → 軽量化 → 車載同期）をゼロから載せる手順です。載せたあとの日常操作は [usage.md](usage.md)、工程定義は [pipeline-stages.md](pipeline-stages.md)、画面つき PPT は [procedure/UGV_MLOps_データ取込からデプロイ手順.pptx](procedure/UGV_MLOps_データ取込からデプロイ手順.pptx)、ID / パスワードは [usage.md の一覧](usage.md#画面の場所と初期-id--パスワード)、閉鎖網への再搬入は [airgap.md](airgap.md)。
 
 ---
 
@@ -122,10 +122,10 @@ docker compose up -d --build
 
 初回は次を Hub / PyPI から取ります。
 
-- 公開イメージ: `postgres:16-alpine`、`dxflrs/garage:v2.3.0`、`heartexlabs/label-studio`、`nginx`、`python:3.12-slim-bookworm` など
+- 公開イメージ: `postgres:16-alpine`、`chrislusf/seaweedfs`、`treeverse/lakefs`、`heartexlabs/label-studio`、`nginx`、`python:3.12-slim-bookworm` など
 - ローカルビルド: Catalog、Worker（YOLOX を git clone するため **ネット必須**）、MLflow
 
-`garage-init` がバケット（`raw` / `datasets` / `models` / `mlflow` / `dvc` など）を作り、終わると消えます。失敗したら `docker compose logs garage-init` を見て、直してから `docker compose up -d` をもう一度。
+`seaweed-init` がバケット（`raw` / `datasets` / `models` / `mlflow` / `lakefs` など）を作り、`lakefs-init` が LakeFS setup + `ugv-datasets` を作ります。失敗したら `docker compose logs seaweed-init lakefs-init` を見て、直してから `docker compose up -d` をもう一度。
 
 待てる目安: 回線次第で 10〜40 分。Worker のビルドが一番長いです。
 
@@ -149,7 +149,13 @@ Label Studio: http://127.0.0.1:8081 （`admin@ugv.local` / `label_change_me`）
 
 メニュー **1** が中核起動、**2** がポータルです。Docker が止まっていれば Desktop を起こしてエンジンを待ちます。
 
-デスクトップに置くときは、`launcher\MLOPS_run.bat` へのショートカットを作る（中身のパスを書き換えない）。既存ホストの `起動スクリプト\MLOPS\MLOPS起動.bat` はユーザー名が直書きなので、新規 PC では使わずショートカットにします。
+デスクトップに置くときは:
+
+```powershell
+.\scripts\install-desktop-launchers.ps1
+```
+
+`起動スクリプト\MLOPS\` に `MLOPS起動.bat`（スタック）と `MLOPS_ROS2.bat`（CARLA / odom / bag 録画 / AutoE2E 推論 / ROS2 シェル）ができます。パスはリポジトリ相対で解決するので、ユーザー名の直書きは不要です。メインメニューの **r** からも同じ ROS2 メニューを開けます。
 
 ---
 
@@ -223,19 +229,15 @@ Freespace の SAM も同じ conda `SALT` と `tools/annotate.py` です。手順
 
 ---
 
-## 9. 任意 — ホストで DVC CLI を使う
+## 9. データ版（LakeFS）
 
-学習の正は Catalog の ID です。ホストから `dvc push` するときだけ:
+学習 ID の正は Catalog です。版履歴は LakeFS（http://127.0.0.1:8001）。CLI:
 
 ```powershell
-pip install -r requirements-dvc.txt
-$env:AWS_ACCESS_KEY_ID = (Get-Content .env | Where-Object { $_ -like "MINIO_ROOT_USER=*" }).Split("=",2)[1]
-$env:AWS_SECRET_ACCESS_KEY = (Get-Content .env | Where-Object { $_ -like "MINIO_ROOT_PASSWORD=*" }).Split("=",2)[1]
-$env:AWS_DEFAULT_REGION = "garage"
-dvc status
+docker compose exec -T worker python -m ugv_mlops.cli lakefs-status
 ```
 
-リモートは `.dvc/config` の `garage`（`http://127.0.0.1:9000`、バケット `dvc`）。コンテナ内 Worker は `garage-docker`（`http://garage:3900`）を使います。
+`LAKEFS_REQUIRED=true` のとき、ingest / dataset の LakeFS commit 失敗はジョブ失敗になります。
 
 ---
 
@@ -288,4 +290,4 @@ DB と Garage の中身まで消すのは `docker compose down -v`（取り消�
 | SALT の窓がすぐ閉じる | WSL `Ubuntu-24.04`、conda 環境 `SALT`、`DISPLAY`。ランチャーは別窓を残す |
 | Garage にファイルが無い | ingest の path はコンテナから見て `/data/inbox/...`。旧 MinIO ボリュームは自動移行しない |
 
-日常のフローは [usage.md](usage.md)、層の対応は [workflow.md](workflow.md) です。
+日常のフローは [usage.md](usage.md)（11 工程）、層の対応は [workflow.md](workflow.md)、工程カードの定義は [pipeline-stages.md](pipeline-stages.md) です。操作 PPT を作り直すときは `python scripts/build-procedure-pptx.py`。

@@ -8,7 +8,7 @@ from minio import Minio
 
 from ugv_mlops.settings import settings
 
-BUCKETS = ("raw", "curated", "datasets", "models", "packages", "mlflow", "lakefs", "dvc")
+BUCKETS = ("raw", "curated", "datasets", "models", "packages", "mlflow", "lakefs")
 
 
 @lru_cache(maxsize=1)
@@ -45,6 +45,15 @@ def get_file(bucket: str, key: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     client().fget_object(bucket, key, str(dest))
     return dest
+
+
+def get_bytes(bucket: str, key: str) -> bytes:
+    obj = client().get_object(bucket, key)
+    try:
+        return obj.read()
+    finally:
+        obj.close()
+        obj.release_conn()
 
 
 def parse_s3_uri(uri: str) -> tuple[str, str]:

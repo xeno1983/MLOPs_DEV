@@ -6,14 +6,16 @@ services:
     pull_policy: never
   redis:
     pull_policy: never
-  garage:
+  seaweed:
     pull_policy: never
-  garage-init:
+  seaweed-init:
     pull_policy: never
   mlflow:
     image: ugv-mlops-mlflow:latest
     pull_policy: never
   lakefs:
+    pull_policy: never
+  lakefs-init:
     pull_policy: never
   labelstudio:
     pull_policy: never

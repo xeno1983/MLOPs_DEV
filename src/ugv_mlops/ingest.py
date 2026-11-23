@@ -25,7 +25,7 @@ def ingest_path(path: Path, source_type: str = "dropzone") -> dict:
     if not path.exists():
         raise FileNotFoundError(str(path))
 
-    from ugv_mlops.bag_pipeline import import_mission, parse_mission, store_mission
+    from ugv_mlops.bag_pipeline import import_mission, parse_mission
     from ugv_mlops.rosbag import is_rosbag
 
     if path.is_file():
@@ -302,15 +302,17 @@ def ingest_path(path: Path, source_type: str = "dropzone") -> dict:
     except Exception as exc:
         result["labelstudio"] = {"ok": False, "error": str(exc)}
     try:
-        result["dvc"] = store_mission(mission_id, push=True)
-    except Exception as exc:
-        try:
-            from ugv_mlops.dvc_sync import publish_mission
+        from ugv_mlops.lakefs_sync import commit_mission, required as lakefs_required
 
-            result["dvc"] = publish_mission(mission_id)
-            result["dvc"]["fallback"] = str(exc)
-        except Exception as exc2:
-            result["dvc"] = {"ok": False, "error": str(exc2), "parse_store": str(exc)}
+        result["lakefs"] = commit_mission(mission_id)
+        if not result["lakefs"].get("ok") and lakefs_required():
+            raise RuntimeError(result["lakefs"].get("error") or "lakefs commit failed")
+    except Exception as exc:
+        from ugv_mlops.lakefs_sync import required as lakefs_required
+
+        result["lakefs"] = {"ok": False, "error": str(exc)}
+        if lakefs_required():
+            raise
     result["bag"] = {
         "raw_dir": str(raw_dir),
         "parsed_dir": str(parsed_dir),

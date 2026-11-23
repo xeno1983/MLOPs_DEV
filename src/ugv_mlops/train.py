@@ -24,7 +24,10 @@ from ugv_mlops.storage import parse_s3_uri
 CLASSES = ("clear", "obstacle", "person")
 
 
-def train_from_dataset(dataset_version_id: str, stage: str | None = None) -> dict:
+def train_from_dataset(dataset_version_id: str, stage: str | None = None, params: dict | None = None) -> dict:
+    from ugv_mlops.stages import assert_learning_stage
+
+    stage = assert_learning_stage(stage)
     with connect() as conn:
         row = conn.execute(
             text(
@@ -41,6 +44,10 @@ def train_from_dataset(dataset_version_id: str, stage: str | None = None) -> dic
         from ugv_mlops.e2e import train_e2e
 
         return train_e2e(dataset_version_id, stage)
+    if row["task"] in {"autoe2e", "auto_e2e", "autoe2e_finetune"}:
+        from ugv_mlops.autoe2e import train_autoe2e
+
+        return train_autoe2e(dataset_version_id, stage, params)
     if row["task"] in {"detection", "yolox", "yolox_nano"}:
         from ugv_mlops.yolox_train import train_yolox
 
@@ -49,7 +56,9 @@ def train_from_dataset(dataset_version_id: str, stage: str | None = None) -> dic
 
 
 def train_obstacle_classifier(dataset_version_id: str, stage: str | None = None) -> dict:
-    stage = stage or settings.default_learning_stage
+    from ugv_mlops.stages import assert_learning_stage
+
+    stage = assert_learning_stage(stage)
     work = settings.work_path / "train" / dataset_version_id
     if work.exists():
         shutil.rmtree(work)
@@ -68,6 +77,18 @@ def train_obstacle_classifier(dataset_version_id: str, stage: str | None = None)
     x_train, y_train = _load_split(work / "data" / "train")
     x_val, y_val = _load_split(work / "data" / "val")
     x_test, y_test = _load_split(work / "data" / "test")
+    if len(y_train) == 0:
+        raise RuntimeError("train split が空です（データセット版を見直してください）")
+    if len(set(int(y) for y in y_train)) < 2:
+        raise RuntimeError(
+            "train split にクラスが1種類しかありません。"
+            "ラベルを2クラス以上にするか、層化分割後の版を使ってください。"
+        )
+    # 少数データで val/test が空なら train で自己評価（smoke 想定）
+    if len(y_val) == 0:
+        x_val, y_val = x_train, y_train
+    if len(y_test) == 0:
+        x_test, y_test = x_val, y_val
 
     model = Pipeline(
         [
@@ -80,10 +101,10 @@ def train_obstacle_classifier(dataset_version_id: str, stage: str | None = None)
     with mlflow.start_run(run_name=f"{dataset_version_id}-{stage}") as run:
         model.fit(x_train, y_train)
         val_pred = model.predict(x_val)
-        test_pred = model.predict(x_test) if len(x_test) else val_pred
+        test_pred = model.predict(x_test)
         val_acc = float(accuracy_score(y_val, val_pred))
-        test_acc = float(accuracy_score(y_test, test_pred)) if len(x_test) else val_acc
-        fpr = _false_positive_rate(y_test if len(x_test) else y_val, test_pred)
+        test_acc = float(accuracy_score(y_test, test_pred))
+        fpr = _false_positive_rate(y_test, test_pred)
         metrics = {
             "val_accuracy": val_acc,
             "accuracy": test_acc,

@@ -220,7 +220,10 @@ def extract_bags(bags: list[Path], dest_dir: Path) -> dict:
                 if kind == "lidar":
                     if seen % lidar_stride != 0 or saved.get(connection.topic, 0) >= lidar_cap:
                         continue
-                    rec = _lidar_record(msg, connection, ts, timestamp, lidar_dir, max_points)
+                    try:
+                        rec = _lidar_record(msg, connection, ts, timestamp, lidar_dir, max_points)
+                    except Exception:
+                        continue
                     lidar_meta.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     series["lidar"].append({k: rec[k] for k in rec if k != "file"})
                     saved[connection.topic] = saved.get(connection.topic, 0) + 1
@@ -397,7 +400,13 @@ def xyz_from_pointcloud2(msg, max_points: int) -> np.ndarray | None:
     if not all(k in fields for k in ("x", "y", "z")):
         return None
     point_step = int(getattr(msg, "point_step", 0) or 0)
-    data = bytes(getattr(msg, "data", b"") or b"")
+    raw = getattr(msg, "data", None)
+    if raw is None:
+        return None
+    if isinstance(raw, np.ndarray):
+        data = raw.tobytes()
+    else:
+        data = bytes(raw)
     if point_step <= 0 or not data:
         return None
     n = min(len(data) // point_step, max_points)

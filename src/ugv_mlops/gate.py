@@ -60,6 +60,38 @@ def verify_bytes(data: bytes, signature_hex: str) -> bool:
         return False
 
 
+AUTOE2E_TASKS = {"autoe2e", "auto_e2e", "autoe2e_finetune"}
+
+
+def _autoe2e_reasons(metrics: dict, thresholds: dict) -> list[str]:
+    """軌道予測（ADE/FDE, 6.4 s）のゲート。絶対値より「親と定速度に勝てているか」を既定にする。"""
+    reasons: list[str] = []
+    ade = metrics.get("ade_6p4s_m")
+    if ade is None:
+        return ["ade_6p4s_m がありません"]
+    ade = float(ade)
+    if thresholds.get("require_improved_over_parent", True):
+        if "improved_over_parent" not in metrics:
+            reasons.append("親モデルとの比較がありません（--skip-baseline の学習はゲート不可）")
+        elif not metrics["improved_over_parent"]:
+            reasons.append(
+                f"ADE {ade:.3f} m が親 {float(metrics.get('parent_ade_6p4s_m', 0.0)):.3f} m を下回っていません"
+            )
+    ratio = thresholds.get("max_ade_vs_cv_ratio")
+    cv = metrics.get("cv_ade_6p4s_m")
+    if ratio is not None and cv:
+        limit = float(ratio) * float(cv)
+        if ade > limit:
+            reasons.append(f"ADE {ade:.3f} m > 定速度ベースライン {float(cv):.3f} m x {ratio} = {limit:.3f} m")
+    max_ade = thresholds.get("max_ade_6p4s_m")
+    if max_ade is not None and ade > float(max_ade):
+        reasons.append(f"ade_6p4s_m {ade:.3f} > {max_ade}")
+    max_fde = thresholds.get("max_fde_6p4s_m")
+    if max_fde is not None and float(metrics.get("fde_6p4s_m", 99.0)) > float(max_fde):
+        reasons.append(f"fde_6p4s_m {float(metrics.get('fde_6p4s_m', 99.0)):.3f} > {max_fde}")
+    return reasons
+
+
 def evaluate_and_promote(
     run_id: str,
     gate_name: str = "staging",
@@ -77,22 +109,41 @@ def evaluate_and_promote(
             metrics = json.loads(metrics)
         stage = run["stage"]
         task = run["task"]
-        if task in {"detection", "yolox", "yolox_nano"}:
+        if task in {"detection", "yolox", "yolox_nano"} or task in AUTOE2E_TASKS:
             kind = "full_weights"
         elif task in {"e2e", "e2e_sequence", "end_to_end"}:
             kind = "joblib"
         else:
             kind = "joblib"
         size_bytes = 0
+        reasons_pre: list[str] = []
+        artifact_uri = (run.get("artifact_uri") or "").strip()
+        if not artifact_uri:
+            reasons_pre.append("training_run has no artifact_uri")
+        else:
+            try:
+                from ugv_mlops.storage import get_bytes, parse_s3_uri
+
+                bkt, key = parse_s3_uri(artifact_uri)
+                size_bytes = len(get_bytes(bkt, key))
+                if size_bytes <= 0:
+                    reasons_pre.append("artifact size is 0 bytes")
+            except Exception as exc:
+                reasons_pre.append(f"artifact fetch failed: {exc}")
         thresholds = gate_thresholds(gate_name)
-        reasons: list[str] = []
+        reasons: list[str] = list(reasons_pre)
 
-        try:
-            assert_artifact_allowed(stage, kind, size_bytes)
-        except PermissionError as exc:
-            reasons.append(str(exc))
+        if size_bytes > 0:
+            try:
+                assert_artifact_allowed(stage, kind, size_bytes)
+            except PermissionError as exc:
+                reasons.append(str(exc))
+        elif not any("artifact" in r for r in reasons):
+            reasons.append("artifact size is 0 bytes")
 
-        if "map50" in metrics:
+        if task in AUTOE2E_TASKS:
+            reasons.extend(_autoe2e_reasons(metrics, thresholds))
+        elif "map50" in metrics:
             min_map = float(thresholds.get("min_map50", 0.05))
             if float(metrics.get("map50", 0.0)) < min_map:
                 reasons.append(f"map50 {metrics['map50']:.3f} < {min_map}")
@@ -123,9 +174,14 @@ def evaluate_and_promote(
             sort_keys=True,
         ).encode()
         signature = None
-        if thresholds.get("require_signature") or True:
+        if thresholds.get("require_signature", True):
             signature = sign_bytes(payload)
             if thresholds.get("require_integrity") and not verify_bytes(payload, signature):
+                reasons.append("integrity verification failed")
+        elif thresholds.get("require_integrity"):
+            # smoke 等で署名不要でも、要求があれば検証可能な署名を付ける
+            signature = sign_bytes(payload)
+            if not verify_bytes(payload, signature):
                 reasons.append("integrity verification failed")
 
         passed = not reasons
@@ -134,6 +190,8 @@ def evaluate_and_promote(
         model_name = (
             "ugv-yolox"
             if task in {"detection", "yolox", "yolox_nano"}
+            else "ugv-autoe2e"
+            if task in AUTOE2E_TASKS
             else "ugv-e2e"
             if task in {"e2e", "e2e_sequence", "end_to_end"}
             else "ugv-obstacle-cls"

@@ -1,9 +1,9 @@
-"""ROS2 bag: 取込 → 追跡 → パース → 保管（DVC GUI と同じ段階）。
+"""ROS2 bag: 取込 → パース → LakeFS 版付け。
 
 配置:
-  data/dvc/raw/missions/<id>/   生 bag / コピーしたフォルダ
+  data/dvc/raw/missions/<id>/   生 bag / コピーしたフォルダ（パス名は互換のため維持）
   data/dvc/parsed/<id>/         cameras / lidar/*.bin / localization / series
-実体の遠隔保管は Garage s3://dvc（ポインタだけ Git）。
+遠隔の版は LakeFS（ブロックは SeaweedFS s3://lakefs）。学習用バイトは s3://raw|datasets。
 """
 from __future__ import annotations
 
@@ -11,9 +11,16 @@ import json
 import shutil
 from pathlib import Path
 
-from ugv_mlops.dvc_sync import _add_and_push, _dvc_importable, repo_root
 from ugv_mlops.rosbag import discover_bags, extract_bags, list_topics
 from ugv_mlops.settings import settings
+
+
+def repo_root() -> Path:
+    """ローカル作業ルート（旧 DVC root 互換）。"""
+    env = __import__("os").environ.get("DVC_ROOT")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[2]
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
@@ -42,12 +49,29 @@ def parsed_dir(mission_id: str) -> Path:
     return parsed_root() / mission_id
 
 
+def lakefs_raw_marker(mission_id: str) -> Path:
+    return raw_root() / f"{mission_id}.lakefs.json"
+
+
+def lakefs_parsed_marker(mission_id: str) -> Path:
+    return parsed_root() / f"{mission_id}.lakefs.json"
+
+
+def mark_lakefs_commit(mission_id: str, kind: str, payload: dict) -> None:
+    """LakeFS commit 成功をローカルに記録（旧 *.dvc ポインタ相当）。"""
+    path = lakefs_raw_marker(mission_id) if kind == "raw" else lakefs_parsed_marker(mission_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+
 def tracked_pointer(mission_id: str) -> Path:
-    return raw_root() / f"{mission_id}.dvc"
+    """後方互換名 → LakeFS raw マーカー。"""
+    return lakefs_raw_marker(mission_id)
 
 
 def parsed_pointer(mission_id: str) -> Path:
-    return parsed_root() / f"{mission_id}.dvc"
+    """後方互換名 → LakeFS parsed マーカー。"""
+    return lakefs_parsed_marker(mission_id)
 
 
 def import_mission(source: Path, mission_id: str | None = None) -> dict:
@@ -148,30 +172,17 @@ def parse_mission(mission_id: str) -> dict:
 
 
 def track_mission(mission_id: str, push: bool = False) -> dict:
-    """raw を DVC 追跡する（実体は Git に入らない）。"""
-    if not _dvc_importable():
-        return {"ok": False, "error": "dvc not installed (requirements-dvc.txt)"}
-    dest = raw_dir(mission_id)
-    if not dest.exists():
-        raise FileNotFoundError(str(dest))
-    return _add_and_push(dest, push=push)
+    """後方互換: LakeFS に raw を載せる（旧 DVC）。"""
+    from ugv_mlops.lakefs_sync import commit_mission
+
+    return commit_mission(mission_id)
 
 
 def store_mission(mission_id: str, push: bool = True) -> dict:
-    """パース結果も追跡し、Garage へ上げる。"""
-    if not _dvc_importable():
-        return {"ok": False, "error": "dvc not installed (requirements-dvc.txt)"}
-    raw = raw_dir(mission_id)
-    parsed = parsed_dir(mission_id)
-    out: dict = {"ok": True, "mission_id": mission_id}
-    if raw.exists():
-        out["raw"] = _add_and_push(raw, push=push)
-        out["ok"] = out["ok"] and bool(out["raw"].get("ok"))
-    if parsed.exists():
-        out["parsed"] = _add_and_push(parsed, push=push)
-        out["ok"] = out["ok"] and bool(out["parsed"].get("ok"))
-    if "raw" not in out and "parsed" not in out:
-        return {"ok": False, "error": f"mission missing: {mission_id}"}
+    """パース結果も含め LakeFS に載せる（ブロックは SeaweedFS）。"""
+    from ugv_mlops.lakefs_sync import commit_mission
+
+    out = commit_mission(mission_id)
     out["stage"] = mission_detail(mission_id)["stage"]
     return out
 

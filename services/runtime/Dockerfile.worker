@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt requirements-yolox.txt requirements-dvc.txt pyproject.toml ./
+COPY requirements.txt requirements-yolox.txt pyproject.toml ./
 COPY src ./src
 COPY configs ./configs
 
@@ -25,7 +25,6 @@ RUN pip install -r requirements.txt \
     && git clone --depth 1 https://github.com/Megvii-BaseDetection/YOLOX.git /opt/YOLOX \
     && python -c "from pathlib import Path; p=Path('/opt/YOLOX/setup.py'); t=p.read_text(); p.write_text(t.replace('ext_modules=get_ext_modules(),','ext_modules=[],'))" \
     && pip install --no-build-isolation --no-deps -e /opt/YOLOX \
-    && pip install psutil \
-    && pip install -r requirements-dvc.txt
+    && pip install psutil
 
 CMD ["python", "-m", "ugv_mlops.worker"]
